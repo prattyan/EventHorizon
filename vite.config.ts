@@ -23,7 +23,6 @@ export default defineConfig(({ mode }) => {
               if (id.includes('firebase')) return 'vendor-firebase';
               if (id.includes('react-dom') || id.includes('/react/')) return 'vendor-react';
               if (id.includes('html5-qrcode')) return 'vendor-qr';
-              if (id.includes('lucide-react')) return 'vendor-icons';
               if (id.includes('socket.io')) return 'vendor-socket';
               if (id.includes('html2canvas')) return 'vendor-canvas';
               // Other smaller modules go into a common vendor chunk
