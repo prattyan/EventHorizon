@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EventHorizon</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preload" as="style"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --primary-base: #f97316;
+      /* Orange-500 */
+      --primary-glow: rgba(249, 115, 22, 0.5);
+      --glass-border: rgba(255, 255, 255, 0.08);
+      --glass-surface: rgba(15, 23, 42, 0.6);
+      --glass-highlight: rgba(255, 255, 255, 0.03);
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+      background: #020617;
+      min-height: 100vh;
+      color: #f8fafc;
+    }
+
+    .font-outfit {
+      font-family: 'Outfit', sans-serif;
+    }
+
+    /* --- Ultra-Premium Glassmorphism --- */
+
+    .liquid-glass {
+      background: rgba(2, 6, 23, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }
+
+    .glass-card {
+      background: linear-gradient(180deg, rgba(30, 41, 59, 0.4) 0%, rgba(15, 23, 42, 0.4) 100%);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--glass-border);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .glass-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+      transition: 0.5s;
+    }
+
+    .glass-card:hover {
+      transform: translateY(-8px) scale(1.01);
+      border-color: rgba(249, 115, 22, 0.3);
+      box-shadow:
+        0 20px 25px -5px rgba(0, 0, 0, 0.5),
+        0 8px 10px -6px rgba(0, 0, 0, 0.5),
+        0 0 15px rgba(249, 115, 22, 0.1);
+      /* Subtle orange glow */
+    }
+
+    .glass-card:hover::before {
+      left: 100%;
+    }
+
+    /* --- Neon & Glow Effects --- */
+
+    .text-glow {
+      text-shadow: 0 0 20px var(--primary-glow);
+    }
+
+    .button-glow {
+      position: relative;
+      background: linear-gradient(45deg, #ea580c, #c2410c);
+      box-shadow: 0 0 15px rgba(234, 88, 12, 0.3);
+      transition: all 0.3s ease;
+      overflow: hidden;
+    }
+
+    .button-glow:hover {
+      box-shadow: 0 0 25px rgba(234, 88, 12, 0.6);
+      transform: translateY(-2px);
+    }
+
+    /* Chromatic Text */
+    .text-refraction {
+      background: linear-gradient(to right, #ffffff 20%, #fdba74 40%, #fb923c 60%, #ffffff 80%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shine 4s linear infinite;
+    }
+
+    @keyframes shine {
+      to {
+        background-position: 200% center;
+      }
+    }
+
+    /* Shimmer Animation for AI Loading */
+    @keyframes shimmer {
+      0% {
+        background-position: 200% 0;
+      }
+
+      100% {
+        background-position: -200% 0;
+      }
+    }
+
+    /* Floating Animation */
+    @keyframes float {
+
+      0%,
+      100% {
+        transform: translateY(0px);
+      }
+
+      50% {
+        transform: translateY(-10px);
+      }
+    }
+
+    .animate-float {
+      animation: float 6s ease-in-out infinite;
+    }
+
+    /* Animated Gradient Border */
+    @keyframes gradient-x {
+      0%, 100% {
+        background-position: 0% 50%;
+      }
+      50% {
+        background-position: 100% 50%;
+      }
+    }
+
+    .animate-gradient-x {
+      background-size: 200% 200%;
+      animation: gradient-x 3s ease infinite;
+    }
+
+    /* Scan Line Animation */
+    @keyframes scan {
+      0% {
+        transform: translateY(-100%);
+      }
+      100% {
+        transform: translateY(1000%);
+      }
+    }
+
+    .animate-scan {
+      animation: scan 3s ease-in-out infinite;
+    }
+
+    /* Orbit Animation */
+    @keyframes orbit {
+      0% {
+        transform: rotate(0deg) translateX(40px) rotate(0deg);
+      }
+      100% {
+        transform: rotate(360deg) translateX(40px) rotate(-360deg);
+      }
+    }
+
+    .animate-orbit {
+      animation: orbit 4s linear infinite;
+    }
+
+    /* Galaxy Background Animation */
+    @keyframes galaxy {
+      0% {
+        transform: scale(1) rotate(0deg);
+      }
+      50% {
+        transform: scale(1.05) rotate(1deg);
+      }
+      100% {
+        transform: scale(1) rotate(0deg);
+      }
+    }
+
+    .animate-galaxy {
+      animation: galaxy 20s ease-in-out infinite;
+    }
+
+    .animate-float-delayed {
+      animation: float 7s ease-in-out 1s infinite;
+    }
+
+    /* Custom Scrollbar */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 100vh;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Input Autofill Fix for Dark Themes */
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    input:-webkit-autofill:active {
+      -webkit-box-shadow: 0 0 0 30px #020617 inset !important;
+      -webkit-text-fill-color: white !important;
+      transition: background-color 5000s ease-in-out 0s;
+    }
+
+    input[type="date"]::-webkit-calendar-picker-indicator,
+    input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+      filter: invert(1);
+      cursor: pointer;
+      opacity: 0.6;
+      transition: opacity 0.2s;
+    }
+
+    input[type="date"]::-webkit-calendar-picker-indicator:hover,
+    input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+      opacity: 1;
+    }
+  </style>
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#d97757" />
+</head>
+
+<body class="bg-[#020617] text-slate-100 antialiased selection:bg-orange-500/30">
+  <div id="root"></div>
+
+  <!-- Permanent reCAPTCHA Containers -->
+  <div id="persistent-recaptcha-container" style="visibility: hidden; position: absolute; pointer-events: none;"></div>
+  <div id="persistent-profile-recaptcha" style="visibility: hidden; position: absolute; pointer-events: none;"></div>
+  <script type="module" src="/index.tsx"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (registrations) {
+        for (let registration of registrations) {
+          registration.unregister().then(function (boolean) {
+            console.log('Service Worker unregistered: ', boolean);
+          });
+        }
+      });
+    }
+  </script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              DEFAULT: 'rgba(217, 119, 87, 0.9)',
+              light: 'rgba(217, 119, 87, 0.3)',
+              subtle: 'rgba(217, 119, 87, 0.1)',
+              solid: '#d97757',
+            },
+            slate: {
+              850: '#1e293b',
+              950: '#020617',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</body>
+
+</html>
