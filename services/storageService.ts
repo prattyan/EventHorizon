@@ -662,7 +662,7 @@ export const markAttendance = async (id: string): Promise<boolean> => {
       const result = await mongoRequest('findOne', 'registrations', { filter: { id: id } });
       const reg = result.document;
 
-      if (reg && reg.status === RegistrationStatus.APPROVED) {
+      if (reg && reg.status === RegistrationStatus.APPROVED && !reg.attended) {
         await mongoRequest('updateOne', 'registrations', {
           filter: { id: id },
           update: { $set: { attended: true, attendanceTime: timestamp } }
@@ -683,7 +683,7 @@ export const markAttendance = async (id: string): Promise<boolean> => {
 
       if (regSnap.exists()) {
         const reg = regSnap.data() as Registration;
-        if (reg.status === RegistrationStatus.APPROVED) {
+        if (reg.status === RegistrationStatus.APPROVED && !reg.attended) {
           await updateDoc(regRef, { attended: true, attendanceTime: timestamp });
           return true;
         }
@@ -699,7 +699,7 @@ export const markAttendance = async (id: string): Promise<boolean> => {
   let found = false;
   const updated = regs.map(r => {
     if (r.id === id) {
-      if (r.status === RegistrationStatus.APPROVED) {
+      if (r.status === RegistrationStatus.APPROVED && !r.attended) {
         found = true;
         return { ...r, attended: true, attendanceTime: timestamp };
       }

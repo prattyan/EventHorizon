@@ -296,6 +296,7 @@ export default function App() {
   const [selectedEventForDetails, setSelectedEventForDetails] = useState<AppEvent | null>(null);
   const [selectedTicket, setSelectedTicket] = useState<Registration | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scanResult, setScanResult] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [detailsTab, setDetailsTab] = useState<'info' | 'discussion'>('info');
 
   // Organizer View State
@@ -1419,6 +1420,9 @@ export default function App() {
   };
 
   const handleScan = async (data: string) => {
+    // Prevent multiple scans while processing or showing result
+    if (scanResult) return;
+
     try {
       const payload = JSON.parse(data);
       if (!payload.id) throw new Error('Invalid QR Code');
@@ -1426,13 +1430,15 @@ export default function App() {
       // Security Check: Verify Organizer Ownership or Collaborative Rights
       const reg = registrations.find(r => r.id === payload.id);
       if (!reg) {
-        addToast('Ticket not recognized.', 'error');
+        setScanResult({ type: 'error', message: 'Ticket not recognized' });
+        setTimeout(() => setScanResult(null), 3000);
         return;
       }
 
       const event = events.find(e => e.id === reg.eventId);
       if (!event) {
-        addToast('Event associated with this ticket not found.', 'error');
+        setScanResult({ type: 'error', message: 'Event not found' });
+        setTimeout(() => setScanResult(null), 3000);
         return;
       }
 
@@ -1440,27 +1446,38 @@ export default function App() {
       const isCollaborator = event.collaboratorEmails?.includes(currentUser?.email || '');
 
       if (!isOrganizer && !isCollaborator) {
-        addToast('Permission Denied: Only the event organizer or co-organizers can scan this ticket.', 'error');
+        setScanResult({ type: 'error', message: 'Permission Denied' });
+        setTimeout(() => setScanResult(null), 3000);
+        return;
+      }
+
+      if (reg.status !== RegistrationStatus.APPROVED) {
+        setScanResult({ type: 'error', message: 'Participant Pending/Rejected' });
+        setTimeout(() => setScanResult(null), 3000);
+        return;
+      }
+
+      if (reg.attended) {
+        setScanResult({ type: 'error', message: 'Ticket Already Used' });
+        setTimeout(() => setScanResult(null), 3000);
         return;
       }
 
       const success = await markAttendance(payload.id);
 
       if (success) {
-        addToast('Attendance Marked Successfully!', 'success');
-        await loadData(); // refresh UI
+        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setScanResult({ type: 'success', message: `${reg.participantName} • ${timestamp}` });
+        await loadData();
       } else {
-        if (reg.status !== RegistrationStatus.APPROVED) {
-          addToast('Participant is not approved yet!', 'error');
-        } else if (reg.attended) {
-          addToast('Already marked as attended.', 'info');
-        } else {
-          addToast('Invalid Ticket or Participant not found', 'error');
-        }
+        setScanResult({ type: 'error', message: 'Check-in Failed / Already Used' });
       }
     } catch (e) {
-      addToast('Invalid QR Code Format', 'error');
+      setScanResult({ type: 'error', message: 'Invalid QR Format' });
     }
+
+    // Auto-clear result to resume scanning
+    setTimeout(() => setScanResult(null), 3000);
   };
 
   const downloadTicket = async () => {
@@ -2557,7 +2574,7 @@ export default function App() {
 
           <div className="flex flex-col items-center md:items-end gap-4 min-w-[200px] w-full md:w-auto">
             <Badge status={reg.status} />
-            {!isPast && (reg.status === RegistrationStatus.APPROVED || reg.status === RegistrationStatus.PENDING) && (
+            {!isPast && (reg.status === RegistrationStatus.APPROVED) && (
               <button
                 onClick={() => setSelectedTicket(reg)}
                 className="w-full bg-orange-600 hover:bg-orange-700 text-white border border-transparent px-8 py-3.5 rounded-2xl text-xs font-black font-outfit transition-all uppercase tracking-widest shadow-xl shadow-orange-600/20 active:scale-95 flex items-center justify-center gap-3"
@@ -4374,6 +4391,7 @@ export default function App() {
             <Scanner
               onScan={handleScan}
               onClose={() => setIsScannerOpen(false)}
+              scanResult={scanResult}
             />
           </Suspense>
         )
