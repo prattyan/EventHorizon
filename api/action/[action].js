@@ -37,7 +37,7 @@ export default async function handler(req, res) {
         const { action } = req.query;
         const { collection, filter, document: docData, update } = req.body;
 
-        if (!collection) {
+        if (!collection && action !== 'fetchBatch') {
             return res.status(400).json({ error: "Missing collection name" });
         }
 
