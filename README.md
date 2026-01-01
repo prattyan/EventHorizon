@@ -1,117 +1,174 @@
-# EventHorizon 🚀
+# EventHorizon 🌌
 
-EventHorizon is a premium, full-stack event management platform designed to provide a seamless experience for both event organizers and attendees. Built with a modern tech stack and a focus on sleek, responsive UI, it offers robust features for event creation, registration, and attendance tracking.
+**EventHorizon** is a state-of-the-art, full-stack event management platform designed to deliver a premium experience for both organizers and attendees. Blending stunning aesthetics with powerful functionality, it offers a seamless workflow from event creation to real-time attendance tracking.
 
 ---
 
 ## ✨ Key Features
 
-### 👤 User Roles
-- **Organizers**: Create and manage events, approve/reject registrations, track attendance via QR scanning, and send automated reminders.
-- **Attendees**: Browse upcoming events, view beautiful event details, register with custom questions, and access digital tickets.
+### 🎨 User Experience
+- **Immersive Design**: Built with a "dark mode first" philosophy, featuring glassmorphism, liquid chrome effects, and particle backgrounds.
+- **PWA Capabilities**: Fully responsive mobile-first design with Service Worker support for offline functionality.
+- **Smooth Animations**: Powered by `framer-motion` for fluid page transitions and interactive elements.
 
-### 📅 Event Management
-- **Smart Event Dashboard**: Clear separation between upcoming and past events.
-- **AI-Powered Descriptions**: Integrated with **Google Gemini AI** to automatically generate compelling event descriptions based on your title and location.
-- **Live Status**: Real-time indicators for events currently in progress.
-- **Premium Image Handling**: Integrated image cropping tool (`react-easy-crop`) for high-quality event cards.
+### 📅 for Organizers
+- **Smart Dashboard**: Comprehensive analytics dashboard to track registrations, revenue, and attendance.
+- **AI-Powered Tools**: Integrated **Google Gemini AI** to auto-generate engaging event descriptions and recommend optimal settings.
+- **Advanced Event Management**:
+  - Image cropping and optimization (`react-easy-crop`).
+  - Custom registration questionnaires (Text, Multiple Choice, Yes/No).
+  - Manual approval workflows for restricted events.
+- **Real-Time Attendance**: Built-in QR Code scanner to verify tickets and mark attendance instantly.
 
-### 🎫 Registration & Ticketing
-- **Custom Questionnaires**: Organizers can add text, multiple-choice, or yes/no questions to registration forms.
-- **Approval Workflow**: Organizers can review participant answers before approving registrations.
-- **Digital Tickets**: Approved attendees receive a unique QR-coded ticket for easy entry.
-- **Attendance Tracking**: Built-in QR scanner for organizers to mark attendance instantly.
-
-### 📱 Premium UX
-- **Perfect Mobile View**: A fully responsive "app-like" experience optimized for touch and small screens.
-- **Glassmorphic UI**: Sleek, modern aesthetic using Tailwind CSS with dark mode, backdrop blurs, and smooth animations.
-- **Instant Feedback**: Toast notifications for all user actions.
+### 🎫 for Attendees
+- **Seamless Registration**: easy-to-use forms with auto-filled profile data.
+- **Digital Tickets**: Beautifully designed, downloadable QR tickets with holographic visual effects.
+- **Personalized Recommendations**: AI-driven event suggestions based on interest and history.
+- **Live Updates**: Real-time status indicators for events (Open, Filling Fast, Sold Out, Live Now).
 
 ---
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: React (Vite), TypeScript, Tailwind CSS
-- **Icons**: Lucide React
-- **Backend API**: Node.js & Express
-- **Database**: MongoDB Atlas (Data API / Connection String)
-- **Authentication**: Firebase Auth (Email/Password & Google Login)
-- **AI Integration**: Google Gemini API
-- **Utilities**: `date-fns` (Date formatting), `react-qr-code` (Ticket generation), `react-easy-crop` (Image processing)
+### Frontend
+- **Framework**: [React 19](https://react.dev/) + [Vite](https://vitejs.dev/)
+- **Language**: [TypeScript](https://www.typescriptlang.org/)
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
+- **Animations**: [Framer Motion](https://www.framer.com/motion/)
+- **State/Data**: Native React Hooks + Context
+
+### Backend & Data
+- **Proxy Server**: Node.js + Express (handles API security and routing).
+- **Database**: [MongoDB Atlas](https://www.mongodb.com/atlas) (Data API).
+- **Real-Time**: [Socket.io](https://socket.io/) (live updates for registrations/notifications).
+- **Authentication**: [Firebase Auth](https://firebase.google.com/) (Google & Email/Password).
+- **AI Engine**: [Google Gemini API](https://ai.google.dev/).
 
 ---
 
 ## 🚀 Getting Started
 
-### Prerequisites
+Follow these steps to set up the project locally.
 
-- [Node.js](https://nodejs.org/) (v16+ recommended)
-- [MongoDB](https://www.mongodb.com/cloud/atlas) account
-- [Firebase](https://console.firebase.google.com/) project
-- [Google AI (Gemini)](https://aistudio.google.com/) API Key
+### Prerequisites
+1.  **Node.js**: v18.0.0 or higher.
+2.  **MongoDB Atlas**: A cloud cluster with a database named `event_horizon`.
+3.  **Firebase Project**: For Authentication.
+4.  **Gemini API Key**: From Google AI Studio.
 
 ### Installation
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/your-username/event-management.git
-   cd event-management
-   ```
+1.  **Clone the Repository**
+    ```bash
+    git clone https://github.com/your-username/event-management.git
+    cd event-management
+    ```
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+2.  **Install Dependencies**
+    ```bash
+    npm install
+    ```
 
-3. **Configure Environment Variables**
-   Create a `.env` file in the root directory (or use `.env.local`) and add the following:
-   ```env
-   # Gemini AI
-   GEMINI_API_KEY=your_gemini_api_key
+3.  **Environment Setup**
+    Create a `.env` file in the root directory. Use the example below:
 
-   # MongoDB
-   MONGODB_URI=your_mongodb_connection_string
-   MONGODB_DB_NAME=event_horizon
+    ```env
+    # --- Backend Configuration (Server) ---
+    PORT=5000
+    MONGODB_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority
+    MONGODB_DB_NAME=event_horizon
+    
+    # --- AI Services ---
+    GEMINI_API_KEY=your_google_gemini_key
 
-   # Firebase
-   FIREBASE_API_KEY=your_firebase_key
-   FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-   FIREBASE_PROJECT_ID=your_project_id
-   FIREBASE_STORAGE_BUCKET=your_project.appspot.com
-   FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-   FIREBASE_APP_ID=your_app_id
-   ```
+    # --- Frontend Configuration (Vite) ---
+    # (Vite automatically loads .env files, prefixes usually not required for server vars unless exposed)
+    
+    # --- Firebase Client SDK (Put these in .env.local if you prefer) ---
+    # Note: If using Vite, you might need VITE_ prefix if accessing in client code directly
+    # OR the project might be configured to read these via process.env replacement.
+    FIREBASE_API_KEY=your_api_key
+    FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+    FIREBASE_PROJECT_ID=your_project_id
+    FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+    FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+    FIREBASE_APP_ID=your_app_id
+    ```
 
-4. **Run the application**
-   Launch both the frontend and the backend server concurrently:
-   ```bash
-   npm run dev:all
-   ```
-   - Frontend: `http://localhost:5173`
-   - Backend API: `http://localhost:5000`
+4.  **Run Development Servers**
+    This project requires both the backend and frontend to be running. We use `concurrently` to run both.
+
+    ```bash
+    npm run dev:all
+    ```
+    - **Frontend**: `http://localhost:3000`
+    - **Backend**: `http://localhost:5000`
 
 ---
 
-## 🏗️ Project Structure
+## 📂 Project Structure
 
-- `/src`: Main application logic (React components and hooks)
-- `/services`: API integration (Storage, AI, Notifications)
-- `/components`: Reusable UI components (Scanner, Layouts)
-- `server.js`: Express proxy for secure MongoDB operations
-- `types.ts`: Global TypeScript interfaces
+```text
+/
+├── api/                  # Serverless settings (Netlify/Vercel)
+├── components/           # Reusable React components
+│   ├── AnalyticsDashboard.tsx
+│   ├── Scanner.tsx
+│   └── ...
+├── services/             # API adapters and Integrations
+│   ├── geminiService.ts
+│   ├── storageService.ts
+│   └── ...
+├── App.tsx               # Main Application Logic (Monolith)
+├── server.js             # Express Backend Entry Point
+├── firebaseConfig.ts     # Firebase Initialization
+├── types.ts              # TypeScript Interfaces
+└── package.json          # Dependencies & Scripts
+```
+
+---
+
+## 📜 Scripts
+
+- `npm run dev`: Runs the frontend and backend concurrently.
+- `npm run server`: Runs only the Express backend.
+- `npm run frontend`: Runs only the Vite frontend.
+- `npm run build`: Builds the frontend for production.
+- `npm run preview`: Previews the production build.
 
 ---
 
 ## 🔒 Security
 
-EventHorizon uses a secure proxy server (`server.js`) to interact with the MongoDB Data API, ensuring that database credentials and API keys are never exposed on the client side. Authentication is handled safely via Firebase's secure SDKs.
+- **Database Access**: Direct database credentials are **never** exposed to the client. All database operations go through the `server.js` proxy.
+- **Environment Variables**: Sensitive keys (Mongo URI, Server-side API keys) are kept in `.env` and not included in the client bundle.
 
 ---
 
-## 🤝 Contributing
+## 🤝 Contribution
 
-Contributions are welcome! Feel free to open an issue or submit a pull request.
+Contributions are welcome! Please follow these steps:
+1.  Fork the repository.
+2.  Create a feature branch (`git checkout -b feature/AmazingFeature`).
+3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4.  Push to the branch (`git push origin feature/AmazingFeature`).
+5.  Open a Pull Request.
 
 ---
 
-**Built with ❤️ for better event experiences.**
+## 📄 License
+
+Distributed under the MIT License. See `LICENSE` for more information.
+
+### Team Members
+
+| Name | Role | LinkedIn | GitHub |
+|------|------|----------|--------|
+| Prattyan Ghosh | Team Lead + Backend Developer | [![LinkedIn](https://img.shields.io/badge/LinkedIn-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/prattyanghosh/) | [![GitHub](https://img.shields.io/badge/GitHub-black?style=flat&logo=github)](https://github.com/prattyan) |
+| Ashis Mahato | Frontend Developer | [![LinkedIn](https://img.shields.io/badge/LinkedIn-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/ashis-mahato-9733332b8/) | [![GitHub](https://img.shields.io/badge/GitHub-black?style=flat&logo=github)](https://github.com/Ashis-404) |
+| Arnab Ghosh |  Developer | [![LinkedIn](https://img.shields.io/badge/LinkedIn-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/arnab-ghosh-854854289/) | [![GitHub](https://img.shields.io/badge/GitHub-black?style=flat&logo=github)](https://github.com/arnabg2005) |
+| Aritra Debnath | Ideation person  | [![LinkedIn](https://img.shields.io/badge/LinkedIn-blue?style=flat&logo=linkedin)](https://www.linkedin.com/in/aritradeb07/) | [![GitHub](https://img.shields.io/badge/GitHub-black?style=flat&logo=github)](https://github.com/AritraDeb05) |
+
+
+
+---
