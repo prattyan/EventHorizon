@@ -9,7 +9,7 @@ class SocketService {
     private listeners: Map<string, Set<(data: any) => void>> = new Map();
 
     connect() {
-        if (this.socket?.connected) return;
+        if (this.socket) return;
 
         this.socket = io(SOCKET_URL);
 

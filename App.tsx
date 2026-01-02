@@ -380,7 +380,13 @@ export default function App() {
       if (data.collection === 'events') {
         loadData(true);
         if (data.action === 'insert') {
-          addToast(`New event: ${data.document.title}`, 'info');
+          // Check if current user is the organizer
+          setCurrentUser(u => {
+            if (!u || u.id !== data.document.organizerId) {
+              addToast(`New event: ${data.document.title}`, 'info');
+            }
+            return u;
+          });
         }
       } else if (data.collection === 'registrations') {
         // Just reload data, don't show "spots left" toast to avoid requiring events/registrations in deps
@@ -4192,16 +4198,18 @@ export default function App() {
                     )}
 
                     <div className="pt-6 mt-4 border-t border-slate-800 space-y-3">
-                      <button
-                        onClick={() => {
-                          setSelectedTicket(selectedRegistrationDetails);
-                          setSelectedRegistrationDetails(null);
-                        }}
-                        className="w-full flex items-center justify-center gap-3 bg-white/5 border border-white/10 hover:bg-white/10 text-white font-black font-outfit py-4 rounded-2xl transition-all group/tkt"
-                      >
-                        <QrCode className="w-5 h-5 text-orange-400 group-hover/tkt:scale-110 transition-transform" />
-                        View Digital Ticket
-                      </button>
+                      {selectedRegistrationDetails.status === 'approved' && (
+                        <button
+                          onClick={() => {
+                            setSelectedTicket(selectedRegistrationDetails);
+                            setSelectedRegistrationDetails(null);
+                          }}
+                          className="w-full flex items-center justify-center gap-3 bg-white/5 border border-white/10 hover:bg-white/10 text-white font-black font-outfit py-4 rounded-2xl transition-all group/tkt"
+                        >
+                          <QrCode className="w-5 h-5 text-orange-400 group-hover/tkt:scale-110 transition-transform" />
+                          View Digital Ticket
+                        </button>
+                      )}
 
                       <button
                         onClick={() => {
