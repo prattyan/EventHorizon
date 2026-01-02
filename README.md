@@ -6,29 +6,50 @@
 
 ## ✨ Key Features
 
-### 🎨 User Experience
-- **Immersive Design**: Built with a "dark mode first" philosophy, featuring glassmorphism, liquid chrome effects, and particle backgrounds.
-- **PWA Capabilities**: Fully responsive mobile-first design with Service Worker support for offline functionality.
-- **Smooth Animations**: Powered by `framer-motion` for fluid page transitions and interactive elements.
+### 🔐 Auth & Security
+- **Multi-Factor Authentication**: Secure login via Email/Password, Google Auth, or Phone (OTP).
+- **Account Security**: Sensitive actions like account deletion are protected by OTP verification (`recaptcha-verifier`).
+- **Role-Based Access**: Distinct portals for **Organizers** (Management) and **Attendees** (Discovery).
 
-### 📅 for Organizers
-- **Smart Dashboard**: Comprehensive analytics dashboard to track registrations, revenue, and attendance.
-- **AI-Powered Tools**: Integrated **Google Gemini AI** to auto-generate engaging event descriptions and recommend optimal settings.
-- **Advanced Event Management**:
-  - Image cropping and optimization (`react-easy-crop`).
-  - Custom registration questionnaires (Text, Multiple Choice, Yes/No).
-  - Manual approval workflows for restricted events.
-- **Real-Time Attendance**: Built-in QR Code scanner to verify tickets and mark attendance instantly.
+### 📅 Advanced Event Management
+- **AI-Powered Creation**: Integrated **Google Gemini** to generate professional event descriptions and titles instantly.
+- **Flexible Registration Models**:
+  - **Individual**: Standard single-user registration.
+  - **Team-Based**: Create teams, generate invite codes, and manage groups.
+- **Custom Questionnaires**: Create dynamic forms with text, multiple-choice, or yes/no questions for applicants.
+- **Collaborators**: Invite other organizers to help manage specific events.
+- **Smart Dashboard**: Real-time analytics on views, registrations, and revenue.
 
-### 🎫 for Attendees
-- **Seamless Registration**: easy-to-use forms with auto-filled profile data.
-- **Digital Tickets**: Beautifully designed, downloadable QR tickets with holographic visual effects.
-- **Personalized Recommendations**: AI-driven event suggestions based on interest and history.
-- **Live Updates**: Real-time status indicators for events (Open, Filling Fast, Sold Out, Live Now).
+### 🎫 Attendee Experience
+- **Interactive Discovery**:
+  - **AI Recommendations**: Personalized event suggestions based on past activity.
+  - **Live Updates**: Real-time status for "Selling Fast" or "Live Now" events.
+- **Digital Ticketing**:
+  - **Holographic Tickets**: Beautiful, downloadable QR tickets.
+  - **Wallet Support**: (Planned) Integration for mobile wallets.
+- **Social Features**:
+  - **Reviews & Ratings**: Rate events and leave detailed feedback.
+  - **Team Coordination**: Join teams via unique invite codes.
+
+### 📱 Performance & Tools
+- **PWA Ready**: Installable as a native app with offline capabilities (Service Workers).
+- **Image Processing**: Built-in high-performance image cropper (`react-easy-crop`) for perfect event banners.
+- **Real-Time Sockets**: Instant notifications for approvals, new messages, and status changes via `Socket.io`.
 
 ---
 
-## 🛠️ Tech Stack
+### 🛠️ Tech Stack
+
+### 🚀 Google Technologies
+- **Generative AI**: `gemini-2.5-flash` utilized for:
+  - **Content Creation**: Auto-generating marketing copy and agendas for events.
+  - **Recommender System**: Analyzing vector similarites (logic) between user history and upcoming events.
+- **Firebase**:
+  - **Authentication**: Robust identity management including Phone Auth (OTP) and Social Login (Google).
+  - **Security**: Recaptcha Verifier for persistent profile protection.
+- **Android Architecture**: Built with `@capacitor/android` for native Android APK generation.
+- **Web Vitals**: Optimized for Chrome's Core Web Vitals with PWA support (Manifest, Service Workers).
+- **Fonts**: Typography powered by **Google Fonts** (Inter & Outfit).
 
 ### Frontend
 - **Framework**: [React 19](https://react.dev/) + [Vite](https://vitejs.dev/)
@@ -43,6 +64,44 @@
 - **Real-Time**: [Socket.io](https://socket.io/) (live updates for registrations/notifications).
 - **Authentication**: [Firebase Auth](https://firebase.google.com/) (Google & Email/Password).
 - **AI Engine**: [Google Gemini API](https://ai.google.dev/).
+
+---
+
+## 🏗️ System Architecture
+
+```mermaid
+graph TD
+    Client[User Client (PWA/Android)]
+    
+    subgraph Frontend [Frontend Layer - React/Vite]
+        UI[UI Components]
+        State[State Management]
+        Service[Service Adapters]
+    end
+
+    subgraph Backend [Backend Layer - Node.js/Express]
+        Proxy[API Proxy Server]
+        Socket[Socket.io Server]
+    end
+
+    subgraph Cloud [Cloud Services]
+        Firebase[Firebase (Auth & Hosting)]
+        Gemini[Google Gemini AI]
+        Mongo[(MongoDB Atlas)]
+    end
+
+    Client <--> UI
+    UI --> State
+    State --> Service
+    
+    Service <-->|REST / Socket| Backend
+    Service -.->|Direct SDK| Firebase
+    
+    Proxy -->|Data API| Mongo
+    Proxy -->|GenAI| Gemini
+    
+    Socket <-->|Real-time| Client
+```
 
 ---
 
@@ -124,6 +183,100 @@ Follow these steps to set up the project locally.
 ├── firebaseConfig.ts     # Firebase Initialization
 ├── types.ts              # TypeScript Interfaces
 └── package.json          # Dependencies & Scripts
+```
+
+---
+
+## 🔄 Process Flow
+
+```mermaid
+graph TD
+    subgraph User_Entry
+        A[User Visits App] -->|Login / Signup| B{Firebase Auth}
+        B -->|Success| C[Role Identification]
+    end
+
+    subgraph Organizer_Workflow
+        C -->|Role: Organizer| D[Organizer Dashboard]
+        D -->|Create Event| E[Event Form]
+        E -->|Call AI| F[Gemini Generation]
+        F -->|Content| E
+        E -->|Publish| G[(MongoDB Database)]
+        D -->|Manage| H[Approve Registrations]
+        D -->|Event Day| I[QR Scanner]
+    end
+
+    subgraph Attendee_Workflow
+        C -->|Role: Attendee| J[Discovery Portal]
+        J -->|Browse| K[Event Listings]
+        J -->|Get Suggestions| L[AI Recommendations]
+        L --> K
+        K -->|Select| M[Event Details]
+        M -->|Register| N{Registration Type}
+        N -->|Individual| O[Direct Registration]
+        N -->|Team| P[Create/Join Team]
+        O & P --> Q{Approval Required?}
+        Q -->|No| R[Ticket Generated]
+        Q -->|Yes| S[Waitlist / Pending]
+        S -->|Organizer Approves| R
+        R -->|Attend| T[Show QR Code]
+        T -.->|Scan| I
+    end
+```
+
+---
+
+
+---
+
+## 📐 Application Wireframes
+
+### Organizer Dashboard Structure
+```mermaid
+graph TD
+    subgraph Window ["Organizer Dashboard"]
+        Header[Top Navigation: Logo, Profile, Theme]
+        
+        subgraph Body ["Main Layout"]
+            direction LR
+            Sidebar[Left Sidebar Menu]
+            
+            subgraph Content ["Content Area"]
+                direction TD
+                Stats[Analytics: Events, Revenue, RSVPs]
+                Action[Create Event Button]
+                
+                subgraph Lists ["Event Lists"]
+                    direction LR
+                    Upcoming[Upcoming Events]
+                    Past[Past Events]
+                end
+            end
+        end
+    end
+    
+    %% Layout Connections
+    Header ~~~ Body
+    Sidebar ~~~ Content
+    Stats ~~~ Action
+    Action ~~~ Lists
+```
+
+### Attendee Discovery Mobile Layout
+```mermaid
+graph TD
+    subgraph Mobile ["Mobile Screen"]
+        NavTop[Header: Logo, User Avatar]
+        Hero[Hero: Search Bar, Filter Chips]
+        AI[AI Recommendations: Horizontal Scroll]
+        List[Events List: Vertical Scroll]
+        NavBot[Bottom Navigation: Browse, Tickets, Profile]
+        
+        NavTop ~~~ Hero
+        Hero ~~~ AI
+        AI ~~~ List
+        List ~~~ NavBot
+    end
 ```
 
 ---
