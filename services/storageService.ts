@@ -1340,6 +1340,41 @@ export const markNotificationRead = async (id: string): Promise<void> => {
   localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS || 'notifications', JSON.stringify(updated));
 };
 
+export const markAllNotificationsRead = async (userId: string): Promise<void> => {
+  if (USE_MONGO) {
+    try {
+      await mongoRequest('updateMany', 'notifications', {
+        filter: { userId: userId, read: false },
+        update: { $set: { read: true } }
+      });
+      return;
+    } catch (e) {
+      console.error("Mongo mark all notifications read failed", e);
+    }
+  }
+
+  if (USE_FIREBASE_STORAGE) {
+    try {
+      const q = query(
+        collection(db, "notifications"),
+        where("userId", "==", userId),
+        where("read", "==", false)
+      );
+      const snapshot = await getDocs(q);
+      const updates = snapshot.docs.map(doc => updateDoc(doc.ref, { read: true }));
+      await Promise.all(updates);
+      return;
+    } catch (e) {
+      console.error("Firebase markAllNotificationsRead failed:", e);
+    }
+  }
+
+  const stored = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS || 'notifications');
+  const notifications = stored ? JSON.parse(stored) : [];
+  const updated = notifications.map((n: any) => n.userId === userId ? { ...n, read: true } : n);
+  localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS || 'notifications', JSON.stringify(updated));
+};
+
 // --- Discussion Messages ---
 
 export const getMessages = async (eventId: string): Promise<any[]> => {

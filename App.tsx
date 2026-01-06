@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import QRCode from 'react-qr-code';
 import {
@@ -18,7 +18,7 @@ import {
   loginUser, registerUser, subscribeToAuth, logoutUser,
   loginWithGoogle, saveUserProfile, resetUserPassword,
   createTeam, getTeamByInviteCode, joinTeam, getTeamsByEventId, getTeamById,
-  getNotifications, addNotification, markNotificationRead,
+  getNotifications, addNotification, markNotificationRead, markAllNotificationsRead,
   getMessages, addMessage, getReviews, addReview, deleteAccount, getEventById, getEventImage, getInitialData,
   initRecaptcha, signInWithPhone, verifyPhoneOtp, checkPhoneNumberExists
 } from './services/storageService';
@@ -228,6 +228,7 @@ const getCroppedImg = (imageSrc: string, pixelCrop: any): Promise<string> => {
 // --- Main App Component ---
 
 export default function App() {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   // Auth State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -687,7 +688,8 @@ export default function App() {
               title: 'Upcoming Event',
               message: `"${event.title}" is starting in less than an hour!`,
               type: 'info',
-              link: 'my-tickets'
+              link: 'my-tickets',
+              eventId: event.id,
             });
 
             localStorage.setItem(reminderKey, 'true');
@@ -786,6 +788,31 @@ export default function App() {
     fetchReviews();
   }, [selectedEventForDetails, detailsTab]);
 
+  // Autofill Name in Custom Questions
+  useEffect(() => {
+    if (selectedEventForReg && currentUser && selectedEventForReg.customQuestions) {
+      const initialAnswers: Record<string, string> = {};
+      let hasUpdates = false;
+
+      selectedEventForReg.customQuestions.forEach(q => {
+        const questionLower = q.question.toLowerCase();
+        // Check triggers: "name" or "full name"
+        // Exclude "team name" to avoid false positives for team info
+        if (
+          (questionLower.includes('name') || questionLower.includes('full name')) &&
+          !questionLower.includes('team')
+        ) {
+          initialAnswers[q.id] = currentUser.name;
+          hasUpdates = true;
+        }
+      });
+
+      if (hasUpdates) {
+        setRegistrationAnswers(prev => ({ ...prev, ...initialAnswers }));
+      }
+    }
+  }, [selectedEventForReg?.id, currentUser?.id]);
+
   const handleSubmitReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedEventForDetails || !currentUser) return;
@@ -812,6 +839,30 @@ export default function App() {
     const data = await getReviews(selectedEventForDetails.id);
     setReviews(data);
   };
+
+  // Scroll Management for Details Modal
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      if (detailsTab === 'discussion') {
+        // Scroll to bottom for chat
+        setTimeout(() => {
+          if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+          }
+        }, 0);
+      } else {
+        // Scroll to top for info/reviews
+        scrollContainerRef.current.scrollTop = 0;
+      }
+    }
+  }, [detailsTab]);
+
+  // Auto-scroll chat on new messages
+  useEffect(() => {
+    if (detailsTab === 'discussion' && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  }, [messages, isMessagesLoading, detailsTab]);
 
   const addToast = (message: string, type: Toast['type'] = 'info') => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -1991,6 +2042,14 @@ export default function App() {
                                 await markNotificationRead(notif.id);
                                 loadData();
                               }
+                              if (notif.eventId) {
+                                const relatedEvent = events.find(e => e.id === notif.eventId);
+                                if (relatedEvent) {
+                                  setSelectedEventForDetails(relatedEvent);
+                                  setIsNotificationsOpen(false);
+                                  return;
+                                }
+                              }
                               if (notif.link) {
                                 setActiveTab(notif.link as Tab);
                                 setIsNotificationsOpen(false);
@@ -2025,7 +2084,16 @@ export default function App() {
                     {notifications.length > 0 && (
                       <div className="px-6 py-4 border-t border-white/5 bg-white/[0.02]">
                         <button
-                          onClick={() => setIsNotificationsOpen(false)}
+                          onClick={async () => {
+                            if (currentUser) {
+                              // Optimistic update for instant UI feedback
+                              setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                              setIsNotificationsOpen(false);
+
+                              await markAllNotificationsRead(currentUser.id);
+                              loadData(true); // Silent reload to sync ensure consistency
+                            }
+                          }}
                           className="text-[11px] font-black uppercase tracking-[0.2em] text-orange-400 hover:text-orange-300 w-full text-center py-2 rounded-xl"
                         >
                           Dismiss All
@@ -2573,7 +2641,14 @@ export default function App() {
             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest opacity-60">ID: {reg.id.slice(0, 8)}</span>
             <h3 className="text-2xl font-black text-white mt-1 mb-3 font-outfit line-clamp-1 group-hover:text-orange-400 transition-colors uppercase tracking-tight">{event.title}</h3>
             <div className="flex flex-wrap justify-center md:justify-start items-center gap-x-6 gap-y-3 mt-4 text-slate-400 text-sm font-medium">
-              <div className="flex items-center gap-2"><Calendar className="w-4 h-4 text-orange-400" /> {format(new Date(event.date), 'MMMM d, yyyy')}</div>
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-orange-400" />
+                {format(new Date(event.date), 'MMM d, yyyy')}
+                {event.endDate && new Date(event.date).toDateString() !== new Date(event.endDate).toDateString()
+                  ? ` - ${format(new Date(event.endDate), 'MMM d, yyyy')}`
+                  : ''}
+              </div>
+              <div className="flex items-center gap-2"><Clock className="w-4 h-4 text-orange-400" /> {format(new Date(event.date), 'h:mm a')} {event.endDate ? `- ${format(new Date(event.endDate), 'h:mm a')}` : ''}</div>
               <div className="flex items-center gap-2"><MapPin className="w-4 h-4 text-orange-400" /> {renderLocation(event.location, event.locationType, "truncate max-w-[150px]")}</div>
             </div>
           </div>
@@ -4514,7 +4589,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="p-6 sm:p-8 overflow-y-auto custom-scrollbar flex-1">
+            <div ref={scrollContainerRef} className="p-6 sm:p-8 overflow-y-auto custom-scrollbar flex-1">
               {detailsTab === 'info' && (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-8 mb-8">
@@ -4525,8 +4600,28 @@ export default function App() {
                         </div>
                         <div>
                           <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Date & Time</p>
-                          <p className="text-sm sm:text-base font-medium">{format(new Date(selectedEventForDetails.date), 'EEEE, MMMM d, yyyy')}</p>
-                          <p className="text-xs sm:text-sm text-slate-400">{format(new Date(selectedEventForDetails.date), 'p')}</p>
+                          {selectedEventForDetails.endDate && new Date(selectedEventForDetails.date).toDateString() !== new Date(selectedEventForDetails.endDate).toDateString() ? (
+                            <div className="flex flex-col gap-0.5 mt-0.5">
+                              <p className="text-sm font-medium">
+                                <span className="text-slate-400 text-[10px] uppercase tracking-wider mr-1.5 font-bold">Start:</span>
+                                {format(new Date(selectedEventForDetails.date), 'MMM d, yyyy')} at {format(new Date(selectedEventForDetails.date), 'p')}
+                              </p>
+                              <p className="text-sm font-medium">
+                                <span className="text-slate-400 text-[10px] uppercase tracking-wider mr-1.5 font-bold">End:</span>
+                                {format(new Date(selectedEventForDetails.endDate), 'MMM d, yyyy')} at {format(new Date(selectedEventForDetails.endDate), 'p')}
+                              </p>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="text-sm sm:text-base font-medium">
+                                {format(new Date(selectedEventForDetails.date), 'EEEE, MMMM d, yyyy')}
+                              </p>
+                              <p className="text-xs sm:text-sm text-slate-400">
+                                {format(new Date(selectedEventForDetails.date), 'p')}
+                                {selectedEventForDetails.endDate && ` - ${format(new Date(selectedEventForDetails.endDate), 'p')}`}
+                              </p>
+                            </>
+                          )}
                         </div>
                       </div>
 

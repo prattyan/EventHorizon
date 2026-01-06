@@ -95,6 +95,7 @@ export interface Notification {
   read: boolean;
   createdAt: string;
   link?: string;
+  eventId?: string;
 }
 
 export interface Message {
