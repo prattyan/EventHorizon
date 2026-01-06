@@ -1,4 +1,4 @@
-# EventHorizon 🌌
+# EventHorizon 
 
 **EventHorizon** is a state-of-the-art, full-stack event management platform designed to deliver a premium experience for both organizers and attendees. Blending stunning aesthetics with powerful functionality, it offers a seamless workflow from event creation to real-time attendance tracking.
 
@@ -65,43 +65,6 @@
 - **Authentication**: [Firebase Auth](https://firebase.google.com/) (Google & Email/Password).
 - **AI Engine**: [Google Gemini API](https://ai.google.dev/).
 
----
-
-## 🏗️ System Architecture
-
-```mermaid
-graph TD
-    Client[User Client (PWA/Android)]
-    
-    subgraph Frontend [Frontend Layer - React/Vite]
-        UI[UI Components]
-        State[State Management]
-        Service[Service Adapters]
-    end
-
-    subgraph Backend [Backend Layer - Node.js/Express]
-        Proxy[API Proxy Server]
-        Socket[Socket.io Server]
-    end
-
-    subgraph Cloud [Cloud Services]
-        Firebase[Firebase (Auth & Hosting)]
-        Gemini[Google Gemini AI]
-        Mongo[(MongoDB Atlas)]
-    end
-
-    Client <--> UI
-    UI --> State
-    State --> Service
-    
-    Service <-->|REST / Socket| Backend
-    Service -.->|Direct SDK| Firebase
-    
-    Proxy -->|Data API| Mongo
-    Proxy -->|GenAI| Gemini
-    
-    Socket <-->|Real-time| Client
-```
 
 ---
 
