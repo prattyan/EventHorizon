@@ -6,6 +6,7 @@ import compression from 'compression';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import crypto from 'crypto';
+import Razorpay from 'razorpay';
 
 dotenv.config();
 
@@ -24,13 +25,13 @@ function encryptData(data) {
         const iv = crypto.randomBytes(16);
         const key = Buffer.from(FINAL_ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
         const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-        
+
         const jsonStr = JSON.stringify(data);
         let encrypted = cipher.update(jsonStr, 'utf8', 'base64');
         encrypted += cipher.final('base64');
-        
+
         const authTag = cipher.getAuthTag();
-        
+
         return {
             encrypted: true,
             iv: iv.toString('base64'),
@@ -67,7 +68,7 @@ const RATE_LIMIT_MAX = 100; // Max requests per window per IP
 app.use((req, res, next) => {
     const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const now = Date.now();
-    
+
     if (!rateLimitMap.has(ip)) {
         rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
     } else {
@@ -246,15 +247,15 @@ function sanitizeEventForAttendee(event) {
 // Filter registrations - attendees only see their own
 function filterRegistrationsForUser(registrations, userId, userEmail, userManagedEventIds) {
     if (!Array.isArray(registrations)) return registrations;
-    
+
     return registrations.filter(reg => {
         // User can see their own registration
         if (reg.participantId === userId) return true;
         if (reg.participantEmail === userEmail) return true;
-        
+
         // Organizers/collaborators can see registrations for their events
         if (userManagedEventIds.has(reg.eventId)) return true;
-        
+
         return false;
     });
 }
@@ -262,17 +263,17 @@ function filterRegistrationsForUser(registrations, userId, userEmail, userManage
 // Filter teams - attendees only see teams they're part of
 function filterTeamsForUser(teams, userId, userEmail, userManagedEventIds) {
     if (!Array.isArray(teams)) return teams;
-    
+
     return teams.filter(team => {
         // User is team leader
         if (team.leaderId === userId) return true;
-        
+
         // User is a team member
         if (team.members && team.members.some(m => m.userId === userId || m.email === userEmail)) return true;
-        
+
         // Organizers/collaborators can see all teams for their events
         if (userManagedEventIds.has(team.eventId)) return true;
-        
+
         return false;
     });
 }
@@ -291,7 +292,7 @@ function sanitizeTeamForUser(team, userId) {
 // Main sanitization function with user context
 function sanitizeDataForUser(data, collectionName, userContext, allEvents = []) {
     const { userId, userEmail } = userContext;
-    
+
     // Build set of event IDs user manages (as organizer or collaborator)
     const userManagedEventIds = new Set();
     allEvents.forEach(event => {
@@ -299,12 +300,12 @@ function sanitizeDataForUser(data, collectionName, userContext, allEvents = []) 
             userManagedEventIds.add(event.id);
         }
     });
-    
+
     if (!Array.isArray(data)) {
         // Single document
         return sanitizeSingleDoc(data, collectionName, userContext, userManagedEventIds);
     }
-    
+
     // Array of documents
     switch (collectionName) {
         case 'events':
@@ -314,10 +315,10 @@ function sanitizeDataForUser(data, collectionName, userContext, allEvents = []) 
                 }
                 return sanitizeEventForAttendee(event);
             });
-            
+
         case 'registrations':
             return filterRegistrationsForUser(data, userId, userEmail, userManagedEventIds);
-            
+
         case 'teams':
             const filteredTeams = filterTeamsForUser(data, userId, userEmail, userManagedEventIds);
             return filteredTeams.map(team => {
@@ -326,7 +327,7 @@ function sanitizeDataForUser(data, collectionName, userContext, allEvents = []) 
                 }
                 return sanitizeTeamForUser(team, userId);
             });
-            
+
         default:
             return data;
     }
@@ -335,14 +336,14 @@ function sanitizeDataForUser(data, collectionName, userContext, allEvents = []) 
 function sanitizeSingleDoc(doc, collectionName, userContext, userManagedEventIds) {
     if (!doc) return doc;
     const { userId, userEmail } = userContext;
-    
+
     switch (collectionName) {
         case 'events':
             if (isOrganizerOrCollaborator(doc, userId, userEmail)) {
                 return doc;
             }
             return sanitizeEventForAttendee(doc);
-            
+
         case 'registrations':
             // Only return if user owns this registration or manages the event
             if (doc.participantId === userId || doc.participantEmail === userEmail) {
@@ -352,7 +353,7 @@ function sanitizeSingleDoc(doc, collectionName, userContext, userManagedEventIds
                 return doc;
             }
             return null; // Hide registration from unauthorized users
-            
+
         case 'teams':
             if (doc.leaderId === userId) return doc;
             if (doc.members?.some(m => m.userId === userId || m.email === userEmail)) {
@@ -362,7 +363,7 @@ function sanitizeSingleDoc(doc, collectionName, userContext, userManagedEventIds
                 return doc;
             }
             return null;
-            
+
         default:
             return doc;
     }
@@ -397,7 +398,6 @@ app.get('/api/cache/stats', (req, res) => {
 });
 
 // Razorpay Integration
-import Razorpay from 'razorpay';
 
 // Use dummy keys if not provided (Test Mode)
 const razorpay = new Razorpay({
@@ -425,7 +425,6 @@ app.post('/api/create-payment-order', async (req, res) => {
 });
 
 app.post('/api/verify-payment', (req, res) => {
-    const crypto = require('crypto');
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
     // Use the same key_secret as initialized
@@ -582,7 +581,7 @@ app.post('/api/action/:action', async (req, res) => {
                         if (reqItem.sort) subOptions.sort = reqItem.sort;
 
                         const docs = await subCol.find(subQuery, subOptions).toArray();
-                        
+
                         // SECURITY: Apply role-based filtering
                         const filteredDocs = sanitizeDataForUser(docs, reqItem.collection, userContext, allEvents);
                         return { documents: filteredDocs };
@@ -590,7 +589,7 @@ app.post('/api/action/:action', async (req, res) => {
                         const subOptions = {};
                         if (reqItem.projection) subOptions.projection = reqItem.projection;
                         const doc = await subCol.findOne(reqItem.filter || {}, subOptions);
-                        
+
                         // SECURITY: Apply role-based filtering for single doc
                         const userManagedEventIds = new Set();
                         allEvents.forEach(event => {

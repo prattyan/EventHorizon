@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MessageSquare, Send, X, Minimize2, Loader2, Sparkles, Bot } from 'lucide-react';
+import { Send, X, Loader2, Sparkles, Bot } from 'lucide-react';
 import { Event } from '../types'; // Adjust based on your types file
 import { chatWithAI, isGeminiConfigured } from '../services/geminiService';
 import ReactMarkdown from 'react-markdown';
@@ -144,8 +144,9 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                                 <button
                                     onClick={() => setIsOpen(false)}
                                     className="p-2 hover:bg-white/5 rounded-full text-slate-400 hover:text-white transition-colors"
+                                    title="Close chat"
                                 >
-                                    <Minimize2 className="w-4 h-4" />
+                                    <X className="w-5 h-5" />
                                 </button>
                             </div>
                         </div>
@@ -168,10 +169,15 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                                         ) : (
                                             <ReactMarkdown
                                                 components={{
+                                                    // @ts-ignore
                                                     strong: ({ node, ...props }) => <span className="font-bold text-orange-400" {...props} />,
+                                                    // @ts-ignore
                                                     p: ({ node, ...props }) => <p className="mb-2 last:mb-0 leading-relaxed" {...props} />,
-                                                    ul: ({ node, ...props }) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
-                                                    li: ({ node, ...props }) => <li className="pl-1" {...props} />,
+                                                    // @ts-ignore
+                                                    ul: ({ node, ordered, depth, ...props }) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
+                                                    // @ts-ignore
+                                                    li: ({ node, ordered, index, checked, ...props }) => <li className="pl-1" {...props} />,
+                                                    // @ts-ignore
                                                     a: ({ node, ...props }) => <a className="text-orange-400 underline hover:text-orange-300" target="_blank" rel="noopener noreferrer" {...props} />,
                                                 }}
                                             >
