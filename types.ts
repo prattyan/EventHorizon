@@ -22,6 +22,12 @@ export interface CustomQuestion {
 
 export type ParticipationMode = 'individual' | 'team' | 'both';
 
+export interface PromoCode {
+  code: string;
+  type: 'percentage' | 'fixed';
+  value: number;
+}
+
 export interface Event {
   id: string;
   title: string;
@@ -38,6 +44,9 @@ export interface Event {
   collaboratorEmails?: string[];
   participationMode?: ParticipationMode;
   maxTeamSize?: number;
+  isPaid?: boolean;
+  price?: number;
+  promoCodes?: PromoCode[];
 }
 
 export enum RegistrationStatus {
@@ -45,6 +54,23 @@ export enum RegistrationStatus {
   APPROVED = 'APPROVED',
   REJECTED = 'REJECTED',
   WAITLISTED = 'WAITLISTED',
+  AWAITING_PAYMENT = 'AWAITING_PAYMENT',
+}
+
+export enum PaymentStatus {
+  PENDING = 'PENDING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+}
+
+export interface PaymentDetails {
+  status: PaymentStatus;
+  amount: number;
+  currency: string;
+  transactionId?: string;
+  orderId?: string;
+  promocodeApplied?: string;
+  discountAmount?: number;
 }
 
 export interface Registration {
@@ -59,6 +85,8 @@ export interface Registration {
   registeredAt: string;
   answers?: Record<string, string>; // questionId -> answer
   participationType: 'individual' | 'team';
+  participantAvatarUrl?: string;
+  paymentDetails?: PaymentDetails;
   teamId?: string;
   teamName?: string;
   isTeamLeader?: boolean;

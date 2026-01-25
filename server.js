@@ -12,7 +12,7 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: "*", // Adjust for production
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
@@ -147,6 +147,52 @@ app.post('/api/cache/clear', (req, res) => {
 app.get('/api/cache/stats', (req, res) => {
     const size = global.apiCache?.size || 0;
     res.json({ entries: size, status: 'ok' });
+});
+
+// Razorpay Integration
+import Razorpay from 'razorpay';
+
+// Use dummy keys if not provided (Test Mode)
+const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_YourKeyIdPlaceholder',
+    key_secret: process.env.RAZORPAY_KEY_SECRET || 'YourKeySecretPlaceholder'
+});
+
+app.post('/api/create-payment-order', async (req, res) => {
+    try {
+        const { amount, currency = 'INR', receipt, notes } = req.body;
+
+        const options = {
+            amount: amount * 100, // Amount in paise
+            currency,
+            receipt,
+            notes
+        };
+
+        const order = await razorpay.orders.create(options);
+        res.json({ success: true, order });
+    } catch (error) {
+        console.error("Razorpay Order Error:", error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/verify-payment', (req, res) => {
+    const crypto = require('crypto');
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+    // Use the same key_secret as initialized
+    const key_secret = process.env.RAZORPAY_KEY_SECRET || 'YourKeySecretPlaceholder';
+
+    const hmac = crypto.createHmac('sha256', key_secret);
+    hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
+    const generated_signature = hmac.digest('hex');
+
+    if (generated_signature === razorpay_signature) {
+        res.json({ success: true, message: "Payment Verified" });
+    } else {
+        res.status(400).json({ success: false, message: "Invalid Signature" });
+    }
 });
 
 // Generic Data API Proxy
@@ -293,7 +339,7 @@ app.post('/api/action/:action', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT;
-httpServer.listen(PORT, () => {
+const PORT = process.env.PORT || 5005;
+httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });

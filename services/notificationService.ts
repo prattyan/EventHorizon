@@ -37,12 +37,12 @@ export const sendStatusUpdateEmail = async (
 
 We are thrilled to inform you that your registration for "${eventTitle}" has been APPROVED!
 
-You can now view your digital ticket in the "My Tickets" section of the EventHorizon app. Please present your QR code at the venue for entry.
+You can now view your digital ticket in the "My Tickets" section of the Eventron app. Please present your QR code at the venue for entry.
 
 We look forward to seeing you there!
 
 Best regards,
-The EventHorizon Team`
+The Eventron Team`
     : `Dear ${participantName},
 
 Thank you for your interest in "${eventTitle}".
@@ -52,7 +52,7 @@ Unfortunately, we are unable to approve your registration at this time. This may
 We hope to see you at future events.
 
 Best regards,
-The EventHorizon Team`;
+The Eventron Team`;
 
   return simulateSendEmail({ to: toEmail, subject, body });
 };
@@ -80,7 +80,7 @@ Don't forget to have your QR code ticket ready for check-in upon arrival. You ca
 Safe travels!
 
 Best regards,
-The EventHorizon Team`;
+The Eventron Team`;
 
   return simulateSendEmail({ to: toEmail, subject, body });
 };

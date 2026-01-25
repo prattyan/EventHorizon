@@ -1,6 +1,6 @@
 {
-    "name": "EventHorizon",
-    "short_name": "EventHorizon",
+    "name": "Eventron",
+    "short_name": "Eventron",
     "description": "Event Management Platform",
     "start_url": "/",
     "display": "standalone",

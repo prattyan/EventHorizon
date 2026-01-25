@@ -5,13 +5,13 @@ import {
   Users, Sparkles, MapPin, ExternalLink, QrCode, ChevronRight, Edit, Calendar, Clock, Plus, ScanLine, Filter, Download, Mail, Send, CheckCircle, XCircle,
   Menu,
   X,
-  Ticket, Info, Trash2, Camera, RefreshCw, Smartphone, Shield, LogOut, Settings as Setting2, Layout, Bell, UserCircle, Search, MoreHorizontal, Check, AlertCircle, CheckSquare, MessageSquare, KeyRound, Share2, Facebook, Twitter, Linkedin, Copy, Star, CalendarPlus, Loader2, Image as ImageIcon, ChevronLeft, Link, Save, Upload
+  Ticket, Info, Trash2, Camera, RefreshCw, Smartphone, Shield, LogOut, Settings as Setting2, Layout, Bell, UserCircle, Search, MoreHorizontal, Check, AlertCircle, CheckSquare, MessageSquare, KeyRound, Share2, Facebook, Twitter, Linkedin, Copy, Star, CalendarPlus, Loader2, Image as ImageIcon, ChevronLeft, Link, Save, Upload, Tag
 } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import Cropper from 'react-easy-crop';
 import { format } from 'date-fns';
 
-import { Event as AppEvent, Registration, RegistrationStatus, Tab, Toast, User, Role, CustomQuestion, Review, ParticipationMode, Team } from './types';
+import { Event as AppEvent, Registration, RegistrationStatus, Tab, Toast, User, Role, CustomQuestion, Review, ParticipationMode, Team, PromoCode, PaymentDetails, PaymentStatus } from './types';
 import {
   getEvents, saveEvent, updateEvent, getRegistrations, addRegistration,
   updateRegistrationStatus, markAttendance, deleteRegistration, deleteEvent,
@@ -20,7 +20,7 @@ import {
   createTeam, getTeamByInviteCode, joinTeam, getTeamsByEventId, getTeamById,
   getNotifications, addNotification, markNotificationRead, markAllNotificationsRead,
   getMessages, addMessage, getReviews, addReview, deleteAccount, getEventById, getEventImage, getInitialData,
-  initRecaptcha, signInWithPhone, verifyPhoneOtp, checkPhoneNumberExists
+  initRecaptcha, signInWithPhone, verifyPhoneOtp, checkPhoneNumberExists, getUserProfile
 } from './services/storageService';
 import { generateEventDescription, getEventRecommendations } from './services/geminiService';
 import { sendStatusUpdateEmail, sendReminderEmail } from './services/notificationService';
@@ -31,6 +31,7 @@ const Scanner = lazy(() => import('./components/Scanner'));
 const AnalyticsDashboard = lazy(() => import('./components/AnalyticsDashboard'));
 const LiquidChrome = lazy(() => import('./components/LiquidChrome'));
 const ParticleBackground = lazy(() => import('./components/ParticleBackground'));
+const EventChatBot = lazy(() => import('./components/EventChatBot'));
 
 // --- Sub-Components ---
 
@@ -135,6 +136,45 @@ const ListRowSkeleton = () => (
 );
 
 // --- Helpers ---
+
+// Helper to lazy load participant avatar if missing
+const ParticipantAvatar = ({ name, avatarUrl, userId }: { name: string, avatarUrl?: string, userId: string }) => {
+  const [src, setSrc] = useState(avatarUrl);
+
+  useEffect(() => {
+    if (src || !userId) return;
+
+    let mounted = true;
+    getUserProfile(userId).then(user => {
+      if (mounted && user && user.avatarUrl) {
+        setSrc(user.avatarUrl);
+      }
+    });
+
+    return () => { mounted = false; };
+  }, [userId, src]);
+
+  return (
+    <div className="flex flex-col items-center gap-2 p-2 bg-slate-800/30 rounded-xl border border-slate-800 hover:bg-slate-800/50 transition-colors group">
+      <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center overflow-hidden border border-slate-700 group-hover:border-orange-500/50 transition-colors">
+        {src ? (
+          <img
+            src={src}
+            alt={name}
+            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+          />
+        ) : (
+          <div className="w-full h-full bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white font-bold text-sm shadow-lg">
+            {name.charAt(0).toUpperCase()}
+          </div>
+        )}
+      </div>
+      <span className="text-[10px] text-slate-300 font-medium text-center truncate w-full px-1" title={name}>
+        {name.split(' ')[0]}
+      </span>
+    </div>
+  );
+};
 
 const LazyEventImage = ({ eventId, initialSrc, alt, className }: { eventId: string, initialSrc?: string, alt: string, className?: string }) => {
   const [src, setSrc] = useState(initialSrc);
@@ -298,7 +338,7 @@ export default function App() {
   const [selectedTicket, setSelectedTicket] = useState<Registration | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scanResult, setScanResult] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-  const [detailsTab, setDetailsTab] = useState<'info' | 'discussion'>('info');
+  const [detailsTab, setDetailsTab] = useState<'info' | 'discussion' | 'reviews'>('info');
 
   // Organizer View State
   const [organizerSelectedEventId, setOrganizerSelectedEventId] = useState<string | null>(null);
@@ -315,10 +355,16 @@ export default function App() {
   const [newEvent, setNewEvent] = useState<{
     title: string; date: string; endDate: string; location: string; locationType: 'online' | 'offline'; description: string; capacity: string; imageUrl: string; customQuestions: CustomQuestion[]; collaboratorEmails: string[];
     participationMode: ParticipationMode; maxTeamSize: string;
+    isPaid: boolean; price: string; promoCodes: PromoCode[];
   }>({
     title: '', date: '', endDate: '', location: '', locationType: 'offline', description: '', capacity: '', imageUrl: '', customQuestions: [], collaboratorEmails: [],
-    participationMode: 'individual', maxTeamSize: '5'
+    participationMode: 'individual', maxTeamSize: '5',
+    isPaid: false, price: '', promoCodes: []
   });
+  const [promoCodeInput, setPromoCodeInput] = useState<{ code: string; type: 'percentage' | 'fixed'; value: string }>({ code: '', type: 'percentage', value: '' });
+  const [appliedPromoCode, setAppliedPromoCode] = useState<PromoCode | null>(null);
+  const [userPromoCode, setUserPromoCode] = useState('');
+
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [registrationAnswers, setRegistrationAnswers] = useState<Record<string, string>>({});
   const [selectedRegistrationDetails, setSelectedRegistrationDetails] = useState<Registration | null>(null);
@@ -338,6 +384,12 @@ export default function App() {
   const [isCropperOpen, setIsCropperOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Payment Modal State
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentPromoCode, setPaymentPromoCode] = useState('');
+  const [paymentAppliedPromo, setPaymentAppliedPromo] = useState<PromoCode | null>(null);
+  const [selectedRegForPayment, setSelectedRegForPayment] = useState<{ reg: Registration, event: AppEvent } | null>(null);
 
   // --- Initialization ---
 
@@ -597,6 +649,29 @@ export default function App() {
     fetchMessages();
     const interval = setInterval(() => fetchMessages(true), 5000);
     return () => clearInterval(interval);
+  }, [selectedEventForDetails]);
+
+  // Fetch Reviews when Event Details Open
+  useEffect(() => {
+    const fetchReviewsData = async (isSilent = false) => {
+      if (selectedEventForDetails) {
+        if (!isSilent) setIsReviewsLoading(true);
+        try {
+          const data = await getReviews(selectedEventForDetails.id);
+          setReviews(data);
+        } catch (e) {
+          console.error("Failed to fetch reviews", e);
+        } finally {
+          if (!isSilent) setIsReviewsLoading(false);
+        }
+      } else {
+        setReviews([]);
+        setRating(5);
+        setReviewComment('');
+      }
+    };
+
+    fetchReviewsData();
   }, [selectedEventForDetails]);
 
   // Hydrate Event Details (Fetch full data if missing logic from list view optimization)
@@ -961,10 +1036,21 @@ export default function App() {
     }
   };
 
+  const loadRazorpay = () => {
+    return new Promise((resolve) => {
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
   const resetEventForm = () => {
     setNewEvent({
       title: '', date: '', endDate: '', location: '', locationType: 'offline', description: '', capacity: '', imageUrl: '', customQuestions: [], collaboratorEmails: [],
-      participationMode: 'individual', maxTeamSize: '5'
+      participationMode: 'individual', maxTeamSize: '5',
+      isPaid: false, price: '', promoCodes: []
     });
     setIsEditMode(false);
     setEditingEventId(null);
@@ -1000,7 +1086,10 @@ export default function App() {
       customQuestions: fullEvent.customQuestions || [],
       collaboratorEmails: fullEvent.collaboratorEmails || [],
       participationMode: fullEvent.participationMode || 'individual',
-      maxTeamSize: (fullEvent.maxTeamSize || 5).toString()
+      maxTeamSize: fullEvent.maxTeamSize?.toString() || '',
+      isPaid: Boolean(fullEvent.isPaid),
+      price: fullEvent.price?.toString() || '',
+      promoCodes: fullEvent.promoCodes || []
     });
     setEditingEventId(fullEvent.id);
     setIsEditMode(true);
@@ -1037,7 +1126,10 @@ export default function App() {
         organizerId: currentUser.id,
         isRegistrationOpen: true,
         participationMode: newEvent.participationMode,
-        maxTeamSize: parseInt(newEvent.maxTeamSize) || 0
+        maxTeamSize: parseInt(newEvent.maxTeamSize) || 0,
+        isPaid: newEvent.isPaid,
+        price: newEvent.isPaid ? parseFloat(newEvent.price) : 0,
+        promoCodes: newEvent.promoCodes
       };
 
       if (new Date(evtDataCommon.endDate) <= new Date(evtDataCommon.date)) {
@@ -1175,10 +1267,24 @@ export default function App() {
         participantName: currentUser.name,
         participantEmail: email,
         status: initialStatus,
-        attended: false,
+        attendance: false,
         registeredAt: new Date().toISOString(),
-        answers: registrationAnswers
+        answers: registrationAnswers,
+        participantAvatarUrl: currentUser.avatarUrl
       };
+
+      // Payment Logic has been moved to after approval
+      // Default to PENDING for all paid events unless waitlisted
+
+      if (selectedEventForReg.isPaid || (selectedEventForReg.price && Number(selectedEventForReg.price) > 0)) {
+        // Even if promo code makes it free, we might still want approval first?
+        // For SIMPLICITY: Only full paying users need approval->payment flow.
+        // If price becomes 0 due to promo code, maybe auto-approve?
+        // Let's stick to: All paid events go to PENDING first.
+
+        // We don't do anything special here, just ensure we don't trigger razorpay.
+        // finalRegData.status is already set to initialStatus (PENDING or WAITLISTED)
+      }
 
       if (teamRegistrationData.mode === 'team') {
         if (teamRegistrationData.subMode === 'create') {
@@ -1243,52 +1349,193 @@ export default function App() {
         await loadData();
         setSelectedEventForReg(null);
         setRegistrationAnswers({});
+        setAppliedPromoCode(null);
         setTeamRegistrationData({ mode: 'individual', subMode: 'create', teamName: '', inviteCode: '' });
+
         if (created.status === RegistrationStatus.WAITLISTED) {
           addToast('Event is full. You have been added to the waitlist.', 'info');
+        } else if (selectedEventForReg.isPaid || (selectedEventForReg.price && Number(selectedEventForReg.price) > 0)) {
+          addToast('Registration submitted! Please wait for organizer approval to proceed with payment.', 'success');
         } else {
           addToast(teamRegistrationData.mode === 'team' ? 'Team registration submitted!' : 'Registration submitted! Waiting for approval.', 'success');
         }
       } else {
         addToast('Registration failed or event is closed', 'error');
       }
-    } catch (error) {
-      console.error(error);
-      addToast('An error occurred', 'error');
+    } catch (error: any) {
+      console.error("Registration Error:", error);
+      addToast(`Error: ${error.message || 'An error occurred during registration'}`, 'error');
     } finally {
       setIsRegistering(false);
     }
   };
 
   const handleStatusUpdate = async (regId: string, status: RegistrationStatus) => {
-    // 1. Update Database
-    await updateRegistrationStatus(regId, status);
-
-    // 2. Send Notification
-    // We need to look up the registration and event details. 
-    // We use the local state before refreshing, assuming it matches the ID.
+    // Check if this is a paid event and we are trying to approve it without payment
     const reg = registrations.find(r => r.id === regId);
     const event = events.find(e => e.id === reg?.eventId);
 
+    let finalStatus = status;
+    const isPaidEvent = event && (event.isPaid || (event.price && Number(event.price) > 0));
+
+    if (status === RegistrationStatus.APPROVED && isPaidEvent) {
+      // If event is paid, check if payment is already done (which shouldn't happen in this flow usually, but safe to check)
+      // If payment pending, set to AWAITING_PAYMENT instead
+      // Note: We need to check if paymentDetails exists and is COMPLETED.
+      const isPaid = reg?.paymentDetails?.status === PaymentStatus.COMPLETED;
+      if (!isPaid) {
+        finalStatus = RegistrationStatus.AWAITING_PAYMENT;
+      }
+    }
+
+    // 1. Update Database
+    await updateRegistrationStatus(regId, finalStatus);
+
+    // 2. Send Notification
     if (reg && event) {
       addToast(`Updating status and notifying user...`, 'info');
-      await sendStatusUpdateEmail(reg.participantEmail, reg.participantName, event.title, status);
+
+      // Determine message based on FINAL status
+      let title = 'Registration Update';
+      let message = `Your registration status for "${event.title}" has been updated to ${finalStatus}.`;
+      let type: 'info' | 'success' | 'warning' = 'info';
+
+      if (finalStatus === RegistrationStatus.APPROVED) {
+        title = 'Registration Approved!';
+        message = `You're in! Your registration for "${event.title}" was approved.`;
+        type = 'success';
+      } else if (finalStatus === RegistrationStatus.AWAITING_PAYMENT) {
+        title = 'Action Required: Payment';
+        message = `Your registration for "${event.title}" is tentatively approved. Please proceed to payment to confirm your spot.`;
+        type = 'warning';
+      }
+
+      await sendStatusUpdateEmail(reg.participantEmail, reg.participantName, event.title, finalStatus);
 
       // Add In-App Notification
       await addNotification({
         userId: reg.participantId,
-        title: status === RegistrationStatus.APPROVED ? 'Registration Approved!' : 'Registration Update',
-        message: status === RegistrationStatus.APPROVED
-          ? `You're in! Your registration for "${event.title}" was approved.`
-          : `Your registration status for "${event.title}" has been updated to ${status}.`,
-        type: status === RegistrationStatus.APPROVED ? 'success' : 'info',
+        title: title,
+        message: message,
+        type: type,
         link: 'my-tickets'
       });
     }
 
     // 3. Refresh Data
     await loadData();
-    addToast(`Participant ${status.toLowerCase()} and notified`, 'success');
+    addToast(`Participant status updated to ${finalStatus}`, 'success');
+  };
+
+  const handleLatePayment = (reg: Registration, event: AppEvent) => {
+    setSelectedRegForPayment({ reg, event });
+    // Reset payment promo state
+    setPaymentPromoCode('');
+    setPaymentAppliedPromo(null);
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleProceedToPayment = async () => {
+    if (!selectedRegForPayment) return;
+    const { reg, event } = selectedRegForPayment;
+
+    // Calculate Final Amount
+    let amount = Number(event.price || 0);
+
+    if (paymentAppliedPromo) {
+      if (paymentAppliedPromo.type === 'percentage') {
+        amount = amount - ((amount * paymentAppliedPromo.value) / 100);
+      } else {
+        amount = amount - paymentAppliedPromo.value;
+      }
+      amount = Math.max(0, amount);
+    }
+
+    if (amount <= 0) {
+      // Free due to promo?
+      await updateRegistrationStatus(reg.id, RegistrationStatus.APPROVED);
+      addToast("Promo code covered entire cost! Ticket confirmed.", "success");
+      await loadData();
+      setIsPaymentModalOpen(false);
+      return;
+    }
+
+    try {
+      const loaded = await loadRazorpay();
+      if (!loaded) {
+        addToast('Razorpay SDK failed to load', 'error');
+        return;
+      }
+
+      // Create Order
+      const orderRes = await fetch('/api/create-payment-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: amount,
+          currency: 'INR',
+          receipt: `rcpt_late_${Date.now()}`,
+          notes: {
+            eventId: event.id,
+            userId: currentUser?.id,
+            registrationId: reg.id,
+            promoCode: paymentAppliedPromo?.code
+          }
+        })
+      });
+
+      const orderData = await orderRes.json();
+      if (!orderData.success) {
+        addToast('Payment order creation failed', 'error');
+        return;
+      }
+
+      const options = {
+        key: import.meta.env.VITE_RAZORPAY_KEY_ID || 'rzp_test_YourKeyIdPlaceholder',
+        amount: orderData.order.amount,
+        currency: orderData.order.currency,
+        name: event.title,
+        description: 'Event Ticket Confirmation',
+        image: event.imageUrl,
+        order_id: orderData.order.id,
+        handler: async function (response: any) {
+          // Success
+          await updateRegistrationStatus(reg.id, RegistrationStatus.APPROVED, {
+            paymentDetails: {
+              status: PaymentStatus.COMPLETED,
+              amount: amount,
+              currency: 'INR',
+              transactionId: response.razorpay_payment_id || response.razorpay_order_id,
+              orderId: response.razorpay_order_id,
+              promocodeApplied: paymentAppliedPromo?.code
+            }
+          });
+          addToast("Payment successful! Ticket confirmed.", "success");
+          loadData();
+          setIsPaymentModalOpen(false);
+        },
+        prefill: {
+          name: currentUser?.name || reg.participantName,
+          email: currentUser?.email || reg.participantEmail,
+          contact: currentUser?.phoneNumber
+        },
+        theme: {
+          color: '#ea580c'
+        },
+        modal: {
+          ondismiss: function () {
+            addToast('Payment cancelled', 'warning');
+          }
+        }
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.open();
+
+    } catch (e: any) {
+      console.error("Payment Error", e);
+      addToast(`Payment Error: ${e.message}`, 'error');
+    }
   };
 
   const handleSendReminders = async (event: AppEvent) => {
@@ -1553,7 +1800,7 @@ export default function App() {
 
       const pngFile = canvas.toDataURL("image/png", 1.0);
       const downloadLink = document.createElement("a");
-      downloadLink.download = `EventHorizon-Ticket-${selectedTicket?.id.slice(0, 8) || 'Pass'}.png`;
+      downloadLink.download = `Eventron-Ticket-${selectedTicket?.id.slice(0, 8) || 'Pass'}.png`;
       downloadLink.href = pngFile;
       downloadLink.click();
 
@@ -1660,7 +1907,7 @@ export default function App() {
 
             {/* Floating Title */}
             <div className="relative z-10 mb-12">
-              <h1 className="text-4xl font-black font-outfit text-slate-200 tracking-tight mb-2">EventHorizon</h1>
+              <h1 className="text-4xl font-black font-outfit text-slate-200 tracking-tight mb-2">Eventron</h1>
               <p className="text-slate-400 text-sm font-medium tracking-widest uppercase opacity-60">Premium Experiences</p>
             </div>
 
@@ -1704,7 +1951,7 @@ export default function App() {
             <div className="w-full max-w-sm">
               <div className="text-center mb-8">
                 <h2 className="text-3xl font-bold text-white mb-2 font-outfit">
-                  {isAuthMode === 'signin' ? 'Welcome Back' : isAuthMode === 'forgot-password' ? 'Reset Password' : 'Welcome to EventHorizon'}
+                  {isAuthMode === 'signin' ? 'Welcome Back' : isAuthMode === 'forgot-password' ? 'Reset Password' : 'Welcome to Eventron'}
                 </h2>
                 <p className="text-zinc-500 text-sm">
                   {isAuthMode === 'signin' ? 'Access your dashboard using your preferred method.' : 'Enter your details to get started.'}
@@ -1948,7 +2195,7 @@ export default function App() {
           <div className="flex items-center group cursor-pointer" onClick={() => setActiveTab('browse')}>
             <div className="flex flex-col">
               <span className="text-xl sm:text-2xl font-black font-outfit tracking-tighter text-refraction drop-shadow-lg">
-                EventHorizon
+                Eventron
               </span>
               <span className="text-[8px] sm:text-[10px] uppercase tracking-[0.2em] sm:tracking-[0.3em] font-bold text-orange-400 -mt-0.5 sm:-mt-1 pl-0.5">Premium Events</span>
             </div>
@@ -2216,6 +2463,10 @@ export default function App() {
               {event.locationType === 'online' ? 'Online' : 'Offline'}
             </div>
 
+            <div className={`absolute top-4 left-4 backdrop-blur-md px-4 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl z-10 ${event.isPaid ? 'bg-orange-600/90 text-white border border-orange-400/30' : 'bg-green-600/90 text-white border border-green-400/30'}`}>
+              {event.isPaid ? `₹${event.price}` : 'Free'}
+            </div>
+
             <div className="absolute bottom-4 left-4 z-10 flex gap-2">
               <span className={`px-3 py-1 backdrop-blur-md rounded-lg text-[10px] font-bold border transition-colors ${remainingSpots === 0 ? 'bg-red-500/20 text-red-300 border-red-500/30' : remainingSpots <= 5 ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' : 'bg-white/10 text-white border-white/10 group-hover:bg-orange-600/50'}`}>
                 {remainingSpots === 0 ? 'Sold Out' : `${remainingSpots} Spots Left`}
@@ -2292,7 +2543,10 @@ export default function App() {
                         currentUser ? (
                           <button
                             disabled={isFull || isClosed}
-                            onClick={() => setSelectedEventForReg(event)}
+                            onClick={async () => {
+                              const fullEvent = await getEventById(event.id, { excludeImage: true });
+                              setSelectedEventForReg(fullEvent || event);
+                            }}
                             className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold font-outfit py-3 rounded-2xl transition-all shadow-lg shadow-orange-600/20 active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
                           >
                             {isFull ? 'Waitlisted' : (isClosed ? 'Registration Closed' : 'Secure Your Spot')}
@@ -2523,7 +2777,10 @@ export default function App() {
                             ) : (
                               <button
                                 disabled={isFull || isClosed}
-                                onClick={() => setSelectedEventForReg(event)}
+                                onClick={async () => {
+                                  const fullEvent = await getEventById(event.id, { excludeImage: true });
+                                  setSelectedEventForReg(fullEvent || event);
+                                }}
                                 className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold font-outfit py-3 rounded-2xl transition-all shadow-lg shadow-orange-600/20 active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
                               >
                                 {isFull ? 'Waitlisted' : (isClosed ? 'Registration Closed' : 'Secure Your Spot')}
@@ -2614,7 +2871,7 @@ export default function App() {
     // Split into Active and Past
     const activeRegs = myRegs.filter(reg => {
       const event = events.find(e => e.id === reg.eventId);
-      return event && !isPastEvent(event) && (reg.status === RegistrationStatus.APPROVED || reg.status === RegistrationStatus.PENDING || reg.status === RegistrationStatus.WAITLISTED);
+      return event && !isPastEvent(event) && (reg.status === RegistrationStatus.APPROVED || reg.status === RegistrationStatus.PENDING || reg.status === RegistrationStatus.WAITLISTED || reg.status === RegistrationStatus.AWAITING_PAYMENT);
     });
 
     const pastRegs = myRegs.filter(reg => {
@@ -2669,10 +2926,18 @@ export default function App() {
             >
               Event Details
             </button>
+            {reg.status === RegistrationStatus.AWAITING_PAYMENT && !isPast && (
+              <button
+                onClick={() => handleLatePayment(reg, event)}
+                className="mt-3 w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg shadow-orange-600/20"
+              >
+                Pay to Confirm
+              </button>
+            )}
             {!isPast && (
               <button
                 onClick={() => handleCancelRegistration(reg.id)}
-                className="text-[10px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-[0.3em] transition-colors flex items-center gap-2 group/cancel mt-2"
+                className="text-[10px] font-black text-rose-500 hover:text-rose-400 uppercase tracking-[0.3em] transition-colors flex items-center gap-2 group/cancel mt-4"
               >
                 <Trash2 className="w-3 h-3 group-hover/cancel:scale-110 transition-transform" />
                 Cancel Registration
@@ -3074,6 +3339,11 @@ export default function App() {
                     <div className="overflow-hidden">
                       <div className="font-medium text-slate-200 truncate">{reg.participantName}</div>
                       <div className="text-xs text-slate-400 truncate">{reg.participantEmail}</div>
+                      {event?.isPaid && reg.paymentDetails?.transactionId && (
+                        <div className="text-[10px] text-orange-400/80 mt-1 font-mono truncate">
+                          Txn: {reg.paymentDetails.transactionId} | ₹{reg.paymentDetails.amount}
+                        </div>
+                      )}
                     </div>
                     <Badge status={reg.status} />
                   </div>
@@ -3141,6 +3411,12 @@ export default function App() {
                     <th className="px-6 py-4 font-semibold text-slate-300">Participant</th>
                     <th className="px-6 py-4 font-semibold text-slate-300">Email</th>
                     <th className="px-6 py-4 font-semibold text-slate-300">Status</th>
+                    {event?.isPaid && (
+                      <>
+                        <th className="px-6 py-4 font-semibold text-slate-300">Amount</th>
+                        <th className="px-6 py-4 font-semibold text-slate-300">Txn ID</th>
+                      </>
+                    )}
                     <th className="px-6 py-4 font-semibold text-slate-300">Attendance</th>
                     <th className="px-6 py-4 font-semibold text-slate-300">Time</th>
                     <th className="px-6 py-4 font-semibold text-slate-300 text-right">Actions</th>
@@ -3177,6 +3453,16 @@ export default function App() {
                       </td>
                       <td className="px-6 py-4 text-slate-400">{reg.participantEmail}</td>
                       <td className="px-6 py-4"><Badge status={reg.status} /></td>
+                      {event?.isPaid && (
+                        <>
+                          <td className="px-6 py-4 text-slate-300 font-medium">
+                            {reg.paymentDetails?.amount ? `₹${reg.paymentDetails.amount}` : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-slate-500 font-mono text-[10px] max-w-[120px] truncate" title={reg.paymentDetails?.transactionId}>
+                            {reg.paymentDetails?.transactionId || '-'}
+                          </td>
+                        </>
+                      )}
                       <td className="px-6 py-4">
                         {reg.attended ? (
                           <span className="flex items-center gap-1 text-green-600 font-medium">
@@ -3441,6 +3727,116 @@ export default function App() {
                     />
                   </div>
                 )}
+
+                <div className="border-t border-slate-800 pt-4 mt-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <label className="text-sm font-medium text-slate-300">Event Admission</label>
+                    <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setNewEvent({ ...newEvent, isPaid: false })}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${!newEvent.isPaid ? 'bg-orange-500 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+                      >
+                        Free
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewEvent({ ...newEvent, isPaid: true })}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${newEvent.isPaid ? 'bg-orange-500 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+                      >
+                        Paid
+                      </button>
+                    </div>
+                  </div>
+
+                  {newEvent.isPaid && (
+                    <div className="space-y-4 animate-in slide-in-from-top-2">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-1">Ticket Price (₹)</label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          className="w-full px-4 py-2 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 focus:ring-2 focus:ring-orange-500 outline-none"
+                          value={newEvent.price}
+                          onChange={e => setNewEvent({ ...newEvent, price: e.target.value })}
+                          placeholder="e.g. 499"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">Promo Codes</label>
+                        <div className="flex gap-2 mb-2">
+                          <input
+                            type="text"
+                            placeholder="Code (e.g. EARLYBIRD)"
+                            className="flex-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 text-sm focus:ring-2 focus:ring-orange-500 outline-none uppercase"
+                            value={promoCodeInput.code}
+                            onChange={e => setPromoCodeInput({ ...promoCodeInput, code: e.target.value.toUpperCase() })}
+                          />
+                          <select
+                            className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                            value={promoCodeInput.type}
+                            onChange={e => setPromoCodeInput({ ...promoCodeInput, type: e.target.value as 'percentage' | 'fixed' })}
+                          >
+                            <option value="percentage">% Off</option>
+                            <option value="fixed">₹ Off</option>
+                          </select>
+                          <input
+                            type="number"
+                            placeholder="Value"
+                            className="w-20 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+                            value={promoCodeInput.value}
+                            onChange={e => setPromoCodeInput({ ...promoCodeInput, value: e.target.value })}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (promoCodeInput.code && promoCodeInput.value) {
+                                setNewEvent(prev => ({
+                                  ...prev,
+                                  promoCodes: [...prev.promoCodes, {
+                                    code: promoCodeInput.code,
+                                    type: promoCodeInput.type,
+                                    value: parseFloat(promoCodeInput.value)
+                                  }]
+                                }));
+                                setPromoCodeInput({ code: '', type: 'percentage', value: '' });
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-sm font-medium"
+                          >
+                            Add
+                          </button>
+                        </div>
+
+                        <div className="space-y-2">
+                          {newEvent.promoCodes.map((code, idx) => (
+                            <div key={idx} className="flex justify-between items-center bg-slate-900 px-3 py-2 rounded-lg border border-slate-800">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-orange-400 font-bold">{code.code}</span>
+                                <span className="text-slate-400 text-xs">
+                                  (-{code.value}{code.type === 'percentage' ? '%' : '₹'})
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const newCodes = [...newEvent.promoCodes];
+                                  newCodes.splice(idx, 1);
+                                  setNewEvent({ ...newEvent, promoCodes: newCodes });
+                                }}
+                                className="text-slate-500 hover:text-red-400"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* Custom Questions Section */}
                 <div>
@@ -3807,10 +4203,25 @@ export default function App() {
                 </div>
               )}
 
+              {/* Payment Info */}
+              {selectedEventForReg.isPaid && (
+                <div className="mb-6 animate-in slide-in-from-top-2">
+                  <div className="p-4 bg-slate-950 rounded-xl border border-slate-700/50 mb-4">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-slate-400 text-sm">Ticket Price</span>
+                      <span className="text-white font-medium">₹{selectedEventForReg.price}</span>
+                    </div>
+                    <div className="mt-2 text-[10px] text-slate-400 text-right opacity-80">
+                      Payment will be collected after organizer approval
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-3 mt-8">
                 <button
                   type="button"
-                  onClick={() => { setSelectedEventForReg(null); setRegistrationAnswers({}); }}
+                  onClick={() => { setSelectedEventForReg(null); setRegistrationAnswers({}); setAppliedPromoCode(null); }}
                   className="flex-1 bg-slate-800 border border-slate-700 text-slate-300 font-semibold py-3 rounded-xl hover:bg-slate-700 transition-all font-outfit"
                 >
                   Cancel
@@ -3820,7 +4231,10 @@ export default function App() {
                   disabled={isRegistering}
                   className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-semibold py-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2 font-outfit shadow-lg shadow-orange-600/20 active:scale-95"
                 >
-                  {isRegistering ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Confirm Registration'}
+                  {isRegistering ? <Loader2 className="w-5 h-5 animate-spin" /> :
+                    selectedEventForReg.isPaid ?
+                      'Submit Registration' : 'Confirm Registration'
+                  }
                 </button>
               </div>
             </form>
@@ -3829,7 +4243,96 @@ export default function App() {
       )
       }
 
-      {/* ANNOUNCEMENT MODAL */}
+      {/* Payment Details Modal would be nice, but we are doing inline */}
+
+      {/* ... continuation of file ... */}
+
+      {/* PAYMENT MODAL WITH PROMO CODE */}
+      <AnimatePresence>
+        {isPaymentModalOpen && selectedRegForPayment && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/95 backdrop-blur-2xl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 w-full max-w-md rounded-[32px] overflow-hidden border border-white/5 shadow-2xl relative"
+            >
+              <div className="p-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-2xl font-black font-outfit text-white">Confirm Payment</h3>
+                  <button onClick={() => setIsPaymentModalOpen(false)} className="text-slate-500 hover:text-white"><XCircle className="w-6 h-6" /></button>
+                </div>
+
+                <div className="mb-6">
+                  <div className="flex justify-between text-slate-400 mb-2">
+                    <span>Ticket Price</span>
+                    <span>₹{selectedRegForPayment.event.price}</span>
+                  </div>
+                  {paymentAppliedPromo && (
+                    <div className="flex justify-between text-green-400 mb-2">
+                      <span className="flex items-center gap-1"><Tag className="w-3 h-3" /> {paymentAppliedPromo.code}</span>
+                      <span>-₹{paymentAppliedPromo.type === 'percentage'
+                        ? ((selectedRegForPayment.event.price || 0) * paymentAppliedPromo.value / 100).toFixed(2)
+                        : paymentAppliedPromo.value}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-white/10 pt-2 flex justify-between text-xl font-bold text-white">
+                    <span>Total</span>
+                    <span>₹{(() => {
+                      let price = selectedRegForPayment.event.price || 0;
+                      if (paymentAppliedPromo) {
+                        if (paymentAppliedPromo.type === 'percentage') {
+                          price = price - (price * paymentAppliedPromo.value / 100);
+                        } else {
+                          price = price - paymentAppliedPromo.value;
+                        }
+                      }
+                      return Math.max(0, price).toFixed(2);
+                    })()}</span>
+                  </div>
+                </div>
+
+                {/* Promo Code Input */}
+                <div className="mb-6">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Have a Promo Code?</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={paymentPromoCode}
+                      onChange={e => setPaymentPromoCode(e.target.value.toUpperCase())}
+                      className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-4 py-2 text-white outline-none focus:border-orange-500 transition-colors uppercase"
+                      placeholder="CODE"
+                    />
+                    <button
+                      onClick={() => {
+                        const code = selectedRegForPayment.event.promoCodes?.find(c => c.code === paymentPromoCode);
+                        if (code) {
+                          setPaymentAppliedPromo(code);
+                          addToast('Code applied!', 'success');
+                        } else {
+                          addToast('Invalid code', 'error');
+                          setPaymentAppliedPromo(null);
+                        }
+                      }}
+                      className="bg-slate-800 hover:bg-slate-700 text-white px-4 rounded-xl font-bold text-sm transition-colors"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleProceedToPayment}
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl text-lg shadow-lg shadow-orange-600/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                >
+                  Payload Payment <ChevronRight className="w-5 h-5" />
+                </button>
+
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {isAnnouncementModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/95 backdrop-blur-2xl">
@@ -3903,165 +4406,287 @@ export default function App() {
       {/* PROFILE EDIT MODAL */}
       {
         isProfileModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
-            <div className="bg-slate-900 w-full h-full sm:h-auto sm:max-w-md sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-300">
-              <div className="flex justify-between items-center p-6 border-b border-slate-800 flex-shrink-0">
-                <h3 className="text-xl font-bold text-white font-outfit">Edit Profile</h3>
-                <button
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#020617]/80 backdrop-blur-xl selection:bg-orange-500/30">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="bg-[#0f172a] w-full max-w-[420px] rounded-[32px] shadow-[0_0_60px_-15px_rgba(0,0,0,0.7)] border border-white/10 overflow-hidden flex flex-col relative group/modal"
+            >
+              {/* Decorative gradients */}
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-40 h-1 bg-gradient-to-r from-transparent via-orange-500 to-transparent opacity-50" />
+              <div className="absolute top-0 inset-x-0 h-40 bg-gradient-to-b from-orange-500/5 to-transparent pointer-events-none" />
+
+              <div className="flex justify-between items-center p-6 pb-2 relative z-10">
+                <motion.h3
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="text-xl font-black text-white font-outfit tracking-tight"
+                >
+                  Edit Profile
+                </motion.h3>
+                <motion.button
+                  whileHover={{ scale: 1.1, rotate: 90 }}
+                  whileTap={{ scale: 0.9 }}
                   onClick={() => setIsProfileModalOpen(false)}
-                  className="text-slate-400 hover:text-white transition-colors p-1"
+                  className="rounded-full p-2 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
                 >
                   <XCircle className="w-6 h-6" />
-                </button>
+                </motion.button>
               </div>
 
-              <form onSubmit={handleUpdateProfile} className="p-6 space-y-4">
-                <div className="flex flex-col items-center mb-6">
-                  <div className="relative group cursor-pointer mb-2">
-                    <div className="w-24 h-24 rounded-full overflow-hidden border-2 border-slate-700 group-hover:border-orange-500 transition-colors bg-slate-800 flex items-center justify-center">
+              <form onSubmit={handleUpdateProfile} className="p-6 pt-2 space-y-5 relative z-10">
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="flex flex-col items-center mb-2"
+                >
+                  <motion.div
+                    whileHover={{ scale: 1.05 }}
+                    className="relative group cursor-pointer"
+                  >
+                    <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-[#0f172a] shadow-xl ring-2 ring-white/10 group-hover:ring-orange-500 transition-all duration-300 flex items-center justify-center bg-slate-800">
                       {profileForm.avatarUrl || currentUser?.avatarUrl ? (
-                        <img src={profileForm.avatarUrl || currentUser?.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                        <motion.img
+                          initial={{ scale: 1.2 }}
+                          animate={{ scale: 1 }}
+                          src={profileForm.avatarUrl || currentUser?.avatarUrl}
+                          alt="Avatar"
+                          className="w-full h-full object-cover"
+                        />
                       ) : (
                         <UserCircle className="w-16 h-16 text-slate-600" />
                       )}
                     </div>
-                    <div className="absolute inset-0 bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <Camera className="w-6 h-6 text-white" />
-                    </div>
+                    <motion.div
+                      className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center backdrop-blur-[2px]"
+                      initial={{ opacity: 0 }}
+                      whileHover={{ opacity: 1 }}
+                    >
+                      <motion.div
+                        initial={{ scale: 0.5, rotate: -45 }}
+                        whileHover={{ scale: 1, rotate: 0 }}
+                      >
+                        <Camera className="w-8 h-8 text-white drop-shadow-lg" />
+                      </motion.div>
+                    </motion.div>
                     <input
                       type="file"
                       accept="image/*"
-                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
                       onChange={(e) => handleImageUpload(e, 'profile')}
                     />
-                  </div>
-                  <p className="text-xs text-slate-500">Tap to change profile picture</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    className="w-full px-4 py-2 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 focus:ring-2 focus:ring-orange-500 outline-none"
-                    value={profileForm.name}
-                    onChange={e => setProfileForm({ ...profileForm, name: e.target.value })}
-                  />
-                </div>
+                  </motion.div>
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.3 }}
+                    className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-3 group-hover:text-orange-400 max-w-[150px] text-center leading-tight transition-colors"
+                  >
+                    Tap to change profile picture
+                  </motion.p>
+                </motion.div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
-                  <input
-                    type="email"
-                    disabled={true}
-                    className="w-full px-4 py-2 rounded-lg border border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed outline-none"
-                    value={profileForm.email}
-                    title="Contact support to change email"
-                  />
-                  <p className="text-xs text-slate-400 mt-1">Email cannot be changed directly.</p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Phone Number</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="tel"
-                      disabled={!!currentUser?.phoneNumber}
-                      className="flex-1 px-4 py-2 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 focus:ring-2 focus:ring-orange-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                      value={profileForm.phoneNumber || ''}
-                      onChange={e => setProfileForm({ ...profileForm, phoneNumber: e.target.value, isPhoneVerified: false })}
-                      placeholder="+1234567890"
-                    />
-                    {!currentUser?.phoneNumber && !profileForm.isPhoneVerified && profileForm.phoneNumber && (
-                      <button
-                        type="button"
-                        disabled={authLoading}
-                        onClick={async () => {
-                          if (authLoading) return;
-                          if (!profileForm.phoneNumber) return;
-                          if (profileForm.phoneNumber === currentUser.phoneNumber) {
-                            setProfileForm({ ...profileForm, isPhoneVerified: true });
-                            return;
-                          }
-
-                          const exists = await checkPhoneNumberExists(profileForm.phoneNumber);
-                          if (exists) {
-                            addToast('Phone number already in use by another account', 'error');
-                            return;
-                          }
-
-                          if (!profileForm.phoneNumber.startsWith('+')) {
-                            addToast('Please include country code (e.g., +1 for US)', 'error');
-                            return;
-                          }
-
-                          setAuthLoading(true);
-                          try {
-                            const appVerifier = initRecaptcha('persistent-profile-recaptcha');
-                            const confirmation = await signInWithPhone(profileForm.phoneNumber, appVerifier);
-                            setConfirmationResult(confirmation);
-                            setOtpPurpose('profile');
-                            setShowOtpInput(true);
-                            addToast('OTP Sent', 'success');
-                          } catch (e: any) {
-                            console.error(e);
-                            addToast(`Failed to send OTP: ${e.message}`, 'error');
-                          } finally {
-                            setAuthLoading(false);
-                          }
-                        }}
-                        className="px-3 py-2 bg-orange-600 rounded-lg text-white text-xs font-semibold hover:bg-orange-700"
-                      >
-                        Verify
-                      </button>
-                    )}
-                    {profileForm.isPhoneVerified && <CheckCircle className="w-6 h-6 text-green-500 mt-2" />}
-                  </div>
-                  {currentUser?.phoneNumber ? (
-                    <p className="text-xs text-slate-400 mt-1">Verified phone number cannot be changed.</p>
-                  ) : (
-                    <p className="text-xs text-slate-400 mt-1">Include country code (e.g. +1...)</p>
-                  )}
-                  {showOtpInput && (otpPurpose === 'deletion' || !profileForm.isPhoneVerified) && (
-                    <div className="mt-2 flex gap-2 animate-in fade-in">
-                      <input
+                <div className="space-y-4">
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className="space-y-1.5"
+                  >
+                    <label className="text-xs font-bold text-slate-400 ml-1">Full Name</label>
+                    <div className="relative">
+                      <motion.input
+                        whileFocus={{ scale: 1.02, backgroundColor: "rgba(30, 41, 59, 1)" }}
                         type="text"
-                        className="flex-1 px-4 py-2 rounded-lg border border-slate-700 bg-slate-950 text-slate-100 focus:ring-2 focus:ring-orange-500 outline-none tracking-widest text-center"
-                        placeholder="OTP"
-                        value={otp}
-                        onChange={e => setOtp(e.target.value)}
+                        required
+                        className="w-full pl-4 pr-4 py-3.5 rounded-2xl bg-[#1e293b] border border-slate-700/50 text-white font-semibold focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all placeholder:text-slate-600"
+                        value={profileForm.name}
+                        onChange={e => setProfileForm({ ...profileForm, name: e.target.value })}
+                        placeholder="John Doe"
                       />
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (otpPurpose === 'deletion') {
-                            await handleConfirmDeletion();
-                          } else {
-                            try {
-                              await confirmationResult.confirm(otp);
-                              setProfileForm(prev => ({ ...prev, isPhoneVerified: true }));
-                              setShowOtpInput(false);
-                              setOtp('');
-                              addToast('Phone number verified!', 'success');
-                            } catch (e) {
-                              addToast('Invalid OTP', 'error');
-                            }
-                          }
-                        }}
-                        className="px-4 py-2 bg-green-600 rounded-lg text-white text-xs font-semibold hover:bg-green-700 font-outfit"
-                      >
-                        Confirm
-                      </button>
                     </div>
-                  )}
+                  </motion.div>
 
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.4 }}
+                    className="space-y-1.5"
+                  >
+                    <label className="text-xs font-bold text-slate-400 ml-1">Email</label>
+                    <div className="relative group/email">
+                      <input
+                        type="email"
+                        disabled
+                        className="w-full pl-4 pr-4 py-3.5 rounded-2xl bg-[#1e293b]/50 border border-slate-800 text-slate-500 font-medium cursor-not-allowed outline-none select-none transition-colors"
+                        value={profileForm.email}
+                      />
+                      <div className="absolute inset-0 bg-transparent" title="Email cannot be changed directly" />
+                    </div>
+                    <p className="text-[10px] text-slate-600 ml-1">Email cannot be changed directly.</p>
+                  </motion.div>
+
+                  <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.5 }}
+                    className="space-y-1.5"
+                  >
+                    <label className="text-xs font-bold text-slate-400 ml-1">Phone Number</label>
+                    <div className="flex gap-2 relative">
+                      <div className="relative flex-1">
+                        <motion.input
+                          whileFocus={{ scale: 1.02, backgroundColor: currentUser?.phoneNumber ? "rgba(20, 83, 45, 0.1)" : "rgba(30, 41, 59, 1)" }}
+                          type="tel"
+                          disabled={!!currentUser?.phoneNumber}
+                          className={`w-full pl-4 ${profileForm.isPhoneVerified ? 'pr-12' : 'pr-4'} py-3.5 rounded-2xl bg-[#1e293b] border text-white font-mono font-medium outline-none transition-all ${currentUser?.phoneNumber
+                            ? 'border-green-500/30 bg-green-900/10 text-green-200'
+                            : 'border-slate-700/50 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20'
+                            }`}
+                          value={profileForm.phoneNumber || ''}
+                          onChange={e => setProfileForm({ ...profileForm, phoneNumber: e.target.value, isPhoneVerified: false })}
+                          placeholder="+1234567890"
+                        />
+                        <AnimatePresence>
+                          {profileForm.isPhoneVerified && (
+                            <motion.div
+                              initial={{ scale: 0, opacity: 0 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              exit={{ scale: 0, opacity: 0 }}
+                              className="absolute right-4 top-1/2 -translate-y-1/2 text-green-500"
+                            >
+                              <CheckCircle className="w-5 h-5 fill-green-500/20" />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+
+                      <AnimatePresence>
+                        {!currentUser?.phoneNumber && !profileForm.isPhoneVerified && profileForm.phoneNumber && (
+                          <motion.button
+                            initial={{ opacity: 0, x: 20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 20 }}
+                            type="button"
+                            disabled={authLoading}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={async () => {
+                              if (authLoading) return;
+                              if (!profileForm.phoneNumber) return;
+                              if (profileForm.phoneNumber === currentUser.phoneNumber) {
+                                setProfileForm({ ...profileForm, isPhoneVerified: true });
+                                return;
+                              }
+
+                              const exists = await checkPhoneNumberExists(profileForm.phoneNumber);
+                              if (exists) {
+                                addToast('Phone number already in use by another account', 'error');
+                                return;
+                              }
+
+                              if (!profileForm.phoneNumber.startsWith('+')) {
+                                addToast('Please include country code (e.g., +1 for US)', 'error');
+                                return;
+                              }
+
+                              setAuthLoading(true);
+                              try {
+                                const appVerifier = initRecaptcha('persistent-profile-recaptcha');
+                                const confirmation = await signInWithPhone(profileForm.phoneNumber, appVerifier);
+                                setConfirmationResult(confirmation);
+                                setOtpPurpose('profile');
+                                setShowOtpInput(true);
+                                addToast('OTP Sent', 'success');
+                              } catch (e: any) {
+                                console.error(e);
+                                addToast(`Failed to send OTP: ${e.message}`, 'error');
+                              } finally {
+                                setAuthLoading(false);
+                              }
+                            }}
+                            className="px-4 rounded-2xl bg-orange-600 text-white font-bold text-xs hover:bg-orange-700 shadow-lg shadow-orange-900/20 whitespace-nowrap"
+                          >
+                            Verify
+                          </motion.button>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    {currentUser?.phoneNumber ? (
+                      <p className="text-[10px] text-green-500/70 font-medium ml-1 flex items-center gap-1">
+                        <Shield className="w-3 h-3" /> Verified phone number cannot be changed.
+                      </p>
+                    ) : (
+                      <p className="text-[10px] text-slate-500 ml-1">Include country code (e.g. +1...)</p>
+                    )}
+
+                    <AnimatePresence>
+                      {showOtpInput && (otpPurpose === 'deletion' || !profileForm.isPhoneVerified) && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="mt-3 flex gap-2 overflow-hidden"
+                        >
+                          <input
+                            type="text"
+                            className="flex-1 px-4 py-2.5 rounded-xl bg-[#020617] border border-orange-500/50 text-orange-500 font-mono text-center tracking-[0.5em] font-bold focus:ring-2 focus:ring-orange-500/20 outline-none"
+                            placeholder="OTP"
+                            value={otp}
+                            onChange={e => setOtp(e.target.value)}
+                            autoFocus
+                          />
+                          <motion.button
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            type="button"
+                            onClick={async () => {
+                              if (otpPurpose === 'deletion') {
+                                await handleConfirmDeletion();
+                              } else {
+                                try {
+                                  await confirmationResult.confirm(otp);
+                                  setProfileForm(prev => ({ ...prev, isPhoneVerified: true }));
+                                  setShowOtpInput(false);
+                                  setOtp('');
+                                  addToast('Phone number verified!', 'success');
+                                } catch (e) {
+                                  addToast('Invalid OTP', 'error');
+                                }
+                              }
+                            }}
+                            className="px-6 py-2.5 bg-green-500 hover:bg-green-600 rounded-xl text-white font-bold text-xs shadow-lg shadow-green-900/20"
+                          >
+                            Confirm
+                          </motion.button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                </div>
+
+                <AnimatePresence>
                   {!showOtpInput && (
-                    <div className="mt-8 pt-6 border-t border-slate-800">
-                      <div className="flex items-center justify-between">
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ delay: 0.6 }}
+                      className="mt-6 pt-5 border-t border-slate-800/50"
+                    >
+                      <div className="flex items-center justify-between group/danger">
                         <div>
-                          <h4 className="text-sm font-bold text-red-500 font-outfit">Danger Zone</h4>
-                          <p className="text-xs text-slate-500 mt-1">Permanently delete your account and all data</p>
+                          <h4 className="text-xs font-bold text-red-500 uppercase tracking-wider group-hover/danger:text-red-400 transition-colors">Danger Zone</h4>
+                          <p className="text-[10px] text-slate-500 mt-1 font-medium">Permanently delete your account and all data</p>
                         </div>
-                        <button
+                        <motion.button
+                          whileHover={{ scale: 1.05, backgroundColor: "rgba(239, 68, 68, 0.2)" }}
+                          whileTap={{ scale: 0.95 }}
                           type="button"
                           disabled={authLoading}
                           onClick={() => {
@@ -4073,43 +4698,52 @@ export default function App() {
                               handleSendDeleteOtp();
                             }
                           }}
-                          className={`px-4 py-2 rounded-lg text-xs font-bold border transition-all ${!currentUser?.phoneNumber
-                            ? 'bg-slate-800/50 border-slate-700 text-slate-600 cursor-not-allowed'
-                            : 'bg-red-900/20 border-red-800/50 text-red-400 hover:bg-red-900/40'
+                          className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all ${!currentUser?.phoneNumber
+                            ? 'bg-slate-800/50 border-slate-800 text-slate-600 cursor-not-allowed'
+                            : 'bg-red-500/10 border-red-500/20 text-red-500'
                             }`}
                         >
                           Delete Account
-                        </button>
+                        </motion.button>
                       </div>
                       {!currentUser?.phoneNumber && (
-                        <p className="text-[10px] text-amber-500/70 mt-2 bg-amber-500/5 p-2 rounded border border-amber-500/10 font-outfit">
-                          ⚠️ Phone verification is required for secure account deletion.
-                        </p>
+                        <motion.div
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="mt-3 flex items-start gap-2 p-3 rounded-xl bg-amber-500/5 border border-amber-500/10"
+                        >
+                          <AlertCircle className="w-4 h-4 text-amber-500/70 flex-shrink-0 mt-0.5" />
+                          <p className="text-[10px] text-amber-500/70 leading-relaxed">
+                            Phone verification is required for secure account deletion to prevent unauthorized access.
+                          </p>
+                        </motion.div>
                       )}
-                    </div>
+                    </motion.div>
                   )}
-                </div>
+                </AnimatePresence>
 
-                <div className="pt-4 flex gap-3">
-                  <button
+                <div className="pt-4 flex gap-4">
+                  <motion.button
+                    whileHover={{ scale: 1.02, backgroundColor: "rgba(51, 65, 85, 1)" }}
+                    whileTap={{ scale: 0.98 }}
                     type="button"
                     onClick={() => setIsProfileModalOpen(false)}
-                    className="flex-1 bg-slate-800 border border-slate-700 text-slate-300 font-semibold py-2 rounded-xl hover:bg-slate-700 transition-colors"
+                    className="flex-1 py-3.5 rounded-2xl bg-[#1e293b] text-slate-300 font-bold text-sm border border-slate-700/50 transition-colors"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </motion.button>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                     type="submit"
                     disabled={isSavingProfile}
-                    className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-semibold py-2 rounded-xl shadow-lg shadow-orange-900/20 transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold text-sm shadow-xl shadow-orange-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                   >
-                    {isSavingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
-                  </button>
+                    {isSavingProfile ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Changes'}
+                  </motion.button>
                 </div>
               </form>
-
-
-            </div>
+            </motion.div>
           </div>
         )
       }
@@ -4661,7 +5295,12 @@ export default function App() {
                         </div>
                         <div>
                           <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Registration</p>
-                          <p className="text-sm sm:text-base font-medium">{selectedEventForDetails.isRegistrationOpen ? 'Open' : 'Closed'}</p>
+                          <p className="text-sm sm:text-base font-medium">
+                            {(() => {
+                              const isOpen = selectedEventForDetails.isRegistrationOpen !== false && new Date(selectedEventForDetails.date) > new Date();
+                              return <span className={isOpen ? "text-emerald-400" : "text-rose-400"}>{isOpen ? "Open" : "Closed"}</span>;
+                            })()}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -4690,7 +5329,7 @@ export default function App() {
                         <Copy className="w-4 h-4" /> Copy Link
                       </button>
                       <a
-                        href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`Check out ${selectedEventForDetails.title} on EventHorizon!`)}&url=${encodeURIComponent(`${window.location.origin}/?event=${selectedEventForDetails.id}`)}`}
+                        href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`Check out ${selectedEventForDetails.title} on Eventron!`)}&url=${encodeURIComponent(`${window.location.origin}/?event=${selectedEventForDetails.id}`)}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-2 px-4 py-2 bg-[#1DA1F2]/10 hover:bg-[#1DA1F2]/20 text-[#1DA1F2] rounded-lg text-sm font-medium transition-colors border border-[#1DA1F2]/20"
@@ -4714,6 +5353,49 @@ export default function App() {
                         <Linkedin className="w-4 h-4" /> LinkedIn
                       </a>
                     </div>
+                  </div>
+
+                  <div className="border-t border-slate-800 pt-6 mt-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Who's Going</p>
+                      <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full border border-slate-700">Approved</span>
+                    </div>
+                    {(() => {
+                      const approvedAttendees = registrations.filter(r => r.eventId === selectedEventForDetails.id && r.status === RegistrationStatus.APPROVED);
+
+                      if (approvedAttendees.length === 0) {
+                        return (
+                          <div className="bg-slate-800/30 rounded-2xl p-4 border border-slate-800 flex items-center gap-3">
+                            <div className="p-2 bg-slate-800 rounded-full text-slate-500">
+                              <Users className="w-4 h-4" />
+                            </div>
+                            <p className="text-sm text-slate-400 italic">No approved participants yet. Be the first!</p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                            {approvedAttendees.slice(0, 15).map((attendee) => (
+                              <ParticipantAvatar
+                                key={attendee.id}
+                                name={attendee.participantName}
+                                avatarUrl={attendee.participantAvatarUrl}
+                                userId={attendee.participantId}
+                              />
+                            ))}
+                          </div>
+                          {approvedAttendees.length > 15 && (
+                            <div className="text-center">
+                              <p className="text-xs text-slate-500 font-medium bg-slate-800/50 py-2 rounded-lg border border-slate-800">
+                                + {approvedAttendees.length - 15} more attendees
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="border-t border-slate-800 pt-6 mt-6">
@@ -5010,6 +5692,11 @@ export default function App() {
           </div>
         </div>
       )}
+
+
+      <Suspense fallback={null}>
+        <EventChatBot events={events} currentUserId={currentUser?.id} />
+      </Suspense>
     </div >
   );
 }

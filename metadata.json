@@ -1,5 +1,5 @@
 {
-  "name": "EventHorizon",
+  "name": "Eventron",
   "description": "A modern event management platform featuring AI-powered event creation, seamless attendee registration, approval workflows, and QR-code based check-in system.",
   "requestFramePermissions": [
     "camera"

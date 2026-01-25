@@ -625,13 +625,12 @@ export const deleteRegistration = async (id: string): Promise<boolean> => {
   return true;
 };
 
-export const updateRegistrationStatus = async (id: string, status: RegistrationStatus): Promise<void> => {
+export const updateRegistrationStatus = async (id: string, status: RegistrationStatus, extraData?: Partial<Registration>): Promise<void> => {
   if (USE_MONGO) {
     try {
-      // Note: Data API updateOne filter matches our custom 'id' field, not necessarily _id
       await mongoRequest('updateOne', 'registrations', {
         filter: { id: id },
-        update: { $set: { status: status } }
+        update: { $set: { status: status, ...extraData } }
       });
       return;
     } catch (e) {
@@ -642,7 +641,7 @@ export const updateRegistrationStatus = async (id: string, status: RegistrationS
   if (USE_FIREBASE_STORAGE) {
     try {
       const regRef = doc(db, "registrations", id);
-      await updateDoc(regRef, { status });
+      await updateDoc(regRef, { status, ...extraData });
       return;
     } catch (e) {
       console.error("Firebase updateRegistrationStatus failed:", e);
@@ -650,7 +649,7 @@ export const updateRegistrationStatus = async (id: string, status: RegistrationS
   }
 
   const regs = await getRegistrations();
-  const updated = regs.map(r => r.id === id ? { ...r, status } : r);
+  const updated = regs.map(r => r.id === id ? { ...r, status, ...extraData } : r);
   localStorage.setItem(STORAGE_KEYS.REGISTRATIONS, JSON.stringify(updated));
 };
 
@@ -803,7 +802,7 @@ export const getTeamsByEventId = async (eventId: string): Promise<Team[]> => {
 // --- Auth & Users ---
 
 // Retrieve user profile
-const getUserProfile = async (uid: string): Promise<User | null> => {
+export const getUserProfile = async (uid: string): Promise<User | null> => {
   if (USE_MONGO) {
     try {
       const result = await mongoRequest('findOne', 'users', { filter: { id: uid } });
