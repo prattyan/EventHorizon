@@ -12,13 +12,17 @@ dotenv.config();
 // ============================================
 // ENCRYPTION: AES-256-GCM for response data
 // ============================================
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'EventHorizon2026SecureKey32Bytes'; // Must be 32 bytes
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length < 16) {
+    console.warn('⚠️  ENCRYPTION_KEY not set or too short in .env - using fallback (NOT SECURE FOR PRODUCTION)');
+}
+const FINAL_ENCRYPTION_KEY = ENCRYPTION_KEY || 'EventHorizon2026SecureKey32Bytes';
 const ALGORITHM = 'aes-256-gcm';
 
 function encryptData(data) {
     try {
         const iv = crypto.randomBytes(16);
-        const key = Buffer.from(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
+        const key = Buffer.from(FINAL_ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
         const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
         
         const jsonStr = JSON.stringify(data);
@@ -52,6 +56,55 @@ app.use(compression()); // Enable GZIP compression
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// ============================================
+// SECURITY: Rate limiting to prevent abuse
+// ============================================
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX = 100; // Max requests per window per IP
+
+app.use((req, res, next) => {
+    const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    const now = Date.now();
+    
+    if (!rateLimitMap.has(ip)) {
+        rateLimitMap.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+    } else {
+        const record = rateLimitMap.get(ip);
+        if (now > record.resetTime) {
+            record.count = 1;
+            record.resetTime = now + RATE_LIMIT_WINDOW;
+        } else {
+            record.count++;
+            if (record.count > RATE_LIMIT_MAX) {
+                console.warn(`🚫 Rate limit exceeded for IP: ${ip}`);
+                return res.status(429).json({ error: 'Too many requests. Please slow down.' });
+            }
+        }
+    }
+    next();
+});
+
+// Clean up old rate limit entries every 5 minutes
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of rateLimitMap.entries()) {
+        if (now > record.resetTime) {
+            rateLimitMap.delete(ip);
+        }
+    }
+}, 300000);
+
+// SECURITY: Add security headers
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    // Note: HTTPS should be enforced at reverse proxy level (nginx/cloudflare)
+    next();
+});
 
 io.on('connection', (socket) => {
     console.log('📱 User connected:', socket.id);

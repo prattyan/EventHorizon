@@ -38,7 +38,12 @@ const USE_FIREBASE_STORAGE = isFirebaseConfigured && !USE_MONGO;
 const USE_FIREBASE_AUTH = isFirebaseConfigured; // Can use Firebase Auth even with Mongo Storage
 
 // --- Decryption for encrypted API responses ---
-const ENCRYPTION_KEY = 'EventHorizon2026SecureKey32Bytes'; // Must match server key
+// SECURITY: Key loaded from environment variable (set in .env as VITE_ENCRYPTION_KEY)
+const ENCRYPTION_KEY = import.meta.env.VITE_ENCRYPTION_KEY || 'EventHorizon2026SecureKey32Bytes';
+
+if (!import.meta.env.VITE_ENCRYPTION_KEY) {
+  console.warn('⚠️ VITE_ENCRYPTION_KEY not set in .env - using fallback (NOT SECURE FOR PRODUCTION)');
+}
 
 async function decryptData(encryptedResponse: any): Promise<any> {
   if (!encryptedResponse.encrypted) {
