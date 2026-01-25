@@ -581,7 +581,11 @@ export default function App() {
   const loadData = async (isSilent = false) => {
     if (!isSilent) setDataLoading(true);
     try {
-      const initialData = await getInitialData(currentUser ? currentUser.id : undefined);
+      // SECURITY: Pass both userId and userEmail for server-side role-based filtering
+      const initialData = await getInitialData(
+        currentUser ? currentUser.id : undefined,
+        currentUser ? currentUser.email : undefined
+      );
       const evts = initialData.events || [];
       const regs = initialData.registrations || [];
       const notifs = initialData.notifications || [];
@@ -613,7 +617,7 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(() => loadData(true), 10000);
+    const interval = setInterval(() => loadData(true), 30000); // Poll every 30 seconds
     return () => clearInterval(interval);
   }, [currentUser]);
 
