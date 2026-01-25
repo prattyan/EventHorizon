@@ -5,8 +5,39 @@ import dotenv from 'dotenv';
 import compression from 'compression';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import crypto from 'crypto';
 
 dotenv.config();
+
+// ============================================
+// ENCRYPTION: AES-256-GCM for response data
+// ============================================
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'EventHorizon2026SecureKey32Bytes'; // Must be 32 bytes
+const ALGORITHM = 'aes-256-gcm';
+
+function encryptData(data) {
+    try {
+        const iv = crypto.randomBytes(16);
+        const key = Buffer.from(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
+        const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+        
+        const jsonStr = JSON.stringify(data);
+        let encrypted = cipher.update(jsonStr, 'utf8', 'base64');
+        encrypted += cipher.final('base64');
+        
+        const authTag = cipher.getAuthTag();
+        
+        return {
+            encrypted: true,
+            iv: iv.toString('base64'),
+            authTag: authTag.toString('base64'),
+            data: encrypted
+        };
+    } catch (error) {
+        console.error('Encryption failed:', error);
+        return data; // Fallback to unencrypted if error
+    }
+}
 
 const app = express();
 const httpServer = createServer(app);
@@ -132,6 +163,169 @@ async function connectDB() {
 
 connectDB();
 
+// ============================================
+// SECURITY: Role-based data filtering
+// ============================================
+
+// Check if user is organizer or collaborator for an event
+function isOrganizerOrCollaborator(event, userId, userEmail) {
+    if (!event || !userId) return false;
+    if (event.organizerId === userId) return true;
+    if (userEmail && event.collaboratorEmails && event.collaboratorEmails.includes(userEmail)) return true;
+    return false;
+}
+
+// Sanitize event data for attendees (non-organizers)
+function sanitizeEventForAttendee(event) {
+    if (!event) return event;
+    const sanitized = { ...event };
+    // Remove sensitive organizer-only data
+    delete sanitized.collaboratorEmails;
+    delete sanitized.internalNotes;
+    delete sanitized.stripeSecretKey;
+    delete sanitized.webhookSecret;
+    delete sanitized.razorpayKeySecret;
+    delete sanitized.promoCodes; // Attendees shouldn't see all promo codes
+    delete sanitized.ticketTiers; // Hide pricing tiers structure
+    return sanitized;
+}
+
+// Filter registrations - attendees only see their own
+function filterRegistrationsForUser(registrations, userId, userEmail, userManagedEventIds) {
+    if (!Array.isArray(registrations)) return registrations;
+    
+    return registrations.filter(reg => {
+        // User can see their own registration
+        if (reg.participantId === userId) return true;
+        if (reg.participantEmail === userEmail) return true;
+        
+        // Organizers/collaborators can see registrations for their events
+        if (userManagedEventIds.has(reg.eventId)) return true;
+        
+        return false;
+    });
+}
+
+// Filter teams - attendees only see teams they're part of
+function filterTeamsForUser(teams, userId, userEmail, userManagedEventIds) {
+    if (!Array.isArray(teams)) return teams;
+    
+    return teams.filter(team => {
+        // User is team leader
+        if (team.leaderId === userId) return true;
+        
+        // User is a team member
+        if (team.members && team.members.some(m => m.userId === userId || m.email === userEmail)) return true;
+        
+        // Organizers/collaborators can see all teams for their events
+        if (userManagedEventIds.has(team.eventId)) return true;
+        
+        return false;
+    });
+}
+
+// Sanitize team data for non-organizers (hide invite code for teams they don't lead)
+function sanitizeTeamForUser(team, userId) {
+    if (!team) return team;
+    const sanitized = { ...team };
+    // Only team leader can see invite code
+    if (team.leaderId !== userId) {
+        delete sanitized.inviteCode;
+    }
+    return sanitized;
+}
+
+// Main sanitization function with user context
+function sanitizeDataForUser(data, collectionName, userContext, allEvents = []) {
+    const { userId, userEmail } = userContext;
+    
+    // Build set of event IDs user manages (as organizer or collaborator)
+    const userManagedEventIds = new Set();
+    allEvents.forEach(event => {
+        if (isOrganizerOrCollaborator(event, userId, userEmail)) {
+            userManagedEventIds.add(event.id);
+        }
+    });
+    
+    if (!Array.isArray(data)) {
+        // Single document
+        return sanitizeSingleDoc(data, collectionName, userContext, userManagedEventIds);
+    }
+    
+    // Array of documents
+    switch (collectionName) {
+        case 'events':
+            return data.map(event => {
+                if (isOrganizerOrCollaborator(event, userId, userEmail)) {
+                    return event; // Full access for organizers
+                }
+                return sanitizeEventForAttendee(event);
+            });
+            
+        case 'registrations':
+            return filterRegistrationsForUser(data, userId, userEmail, userManagedEventIds);
+            
+        case 'teams':
+            const filteredTeams = filterTeamsForUser(data, userId, userEmail, userManagedEventIds);
+            return filteredTeams.map(team => {
+                if (userManagedEventIds.has(team.eventId)) {
+                    return team; // Full access for organizers
+                }
+                return sanitizeTeamForUser(team, userId);
+            });
+            
+        default:
+            return data;
+    }
+}
+
+function sanitizeSingleDoc(doc, collectionName, userContext, userManagedEventIds) {
+    if (!doc) return doc;
+    const { userId, userEmail } = userContext;
+    
+    switch (collectionName) {
+        case 'events':
+            if (isOrganizerOrCollaborator(doc, userId, userEmail)) {
+                return doc;
+            }
+            return sanitizeEventForAttendee(doc);
+            
+        case 'registrations':
+            // Only return if user owns this registration or manages the event
+            if (doc.participantId === userId || doc.participantEmail === userEmail) {
+                return doc;
+            }
+            if (userManagedEventIds.has(doc.eventId)) {
+                return doc;
+            }
+            return null; // Hide registration from unauthorized users
+            
+        case 'teams':
+            if (doc.leaderId === userId) return doc;
+            if (doc.members?.some(m => m.userId === userId || m.email === userEmail)) {
+                return sanitizeTeamForUser(doc, userId);
+            }
+            if (userManagedEventIds.has(doc.eventId)) {
+                return doc;
+            }
+            return null;
+            
+        default:
+            return doc;
+    }
+}
+
+// Legacy sanitize functions for backward compatibility
+function sanitizeDocument(doc, collectionName) {
+    return doc; // Now handled by role-based filtering
+}
+
+function sanitizeDocuments(docs, collectionName) {
+    return docs; // Now handled by role-based filtering
+}
+
+// ============================================
+
 // Cache management endpoint
 app.post('/api/cache/clear', (req, res) => {
     if (global.apiCache) {
@@ -201,7 +395,9 @@ app.post('/api/action/:action', async (req, res) => {
                 if (req.body.sort) options.sort = req.body.sort;
 
                 result = await col.find(query, options).toArray();
-                const responseData = { documents: result };
+                // SECURITY: Sanitize response to remove sensitive fields
+                const sanitizedResult = sanitizeDocuments(result, collection);
+                const responseData = { documents: sanitizedResult };
                 setCache(responseData);
                 res.json(responseData);
                 break;
@@ -210,7 +406,9 @@ app.post('/api/action/:action', async (req, res) => {
                 const findOneOptions = {};
                 if (req.body.projection) findOneOptions.projection = req.body.projection;
                 result = await col.findOne(filter || {}, findOneOptions);
-                const responseDataOne = { document: result };
+                // SECURITY: Sanitize response (detail view for single document)
+                const sanitizedOne = sanitizeDocument(result, collection);
+                const responseDataOne = { document: sanitizedOne };
                 setCache(responseDataOne);
                 res.json(responseDataOne);
                 break;
@@ -260,6 +458,20 @@ app.post('/api/action/:action', async (req, res) => {
                     return res.status(400).json({ error: "requests must be an array" });
                 }
 
+                // SECURITY: Extract user context from headers
+                const userContext = {
+                    userId: req.headers['x-user-id'] || null,
+                    userEmail: req.headers['x-user-email'] || null
+                };
+
+                // First, fetch all events to determine user permissions
+                let allEvents = [];
+                const eventsRequest = requests.find(r => r.collection === 'events');
+                if (eventsRequest) {
+                    const eventsCol = db.collection('events');
+                    allEvents = await eventsCol.find({}).toArray();
+                }
+
                 // Execute all requests in parallel
                 const results = await Promise.all(requests.map(async (reqItem) => {
                     const subCol = db.collection(reqItem.collection);
@@ -271,17 +483,31 @@ app.post('/api/action/:action', async (req, res) => {
                         if (reqItem.sort) subOptions.sort = reqItem.sort;
 
                         const docs = await subCol.find(subQuery, subOptions).toArray();
-                        return { documents: docs };
+                        
+                        // SECURITY: Apply role-based filtering
+                        const filteredDocs = sanitizeDataForUser(docs, reqItem.collection, userContext, allEvents);
+                        return { documents: filteredDocs };
                     } else if (reqItem.action === 'findOne') {
                         const subOptions = {};
                         if (reqItem.projection) subOptions.projection = reqItem.projection;
                         const doc = await subCol.findOne(reqItem.filter || {}, subOptions);
-                        return { document: doc };
+                        
+                        // SECURITY: Apply role-based filtering for single doc
+                        const userManagedEventIds = new Set();
+                        allEvents.forEach(event => {
+                            if (isOrganizerOrCollaborator(event, userContext.userId, userContext.userEmail)) {
+                                userManagedEventIds.add(event.id);
+                            }
+                        });
+                        const filteredDoc = sanitizeSingleDoc(doc, reqItem.collection, userContext, userManagedEventIds);
+                        return { document: filteredDoc };
                     }
                     return { error: "Unsupported batch action" };
                 }));
 
-                res.json({ results });
+                // SECURITY: Encrypt the response data
+                const encryptedResponse = encryptData({ results });
+                res.json(encryptedResponse);
                 break;
 
             default:

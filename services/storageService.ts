@@ -37,17 +37,73 @@ const USE_MONGO = true;
 const USE_FIREBASE_STORAGE = isFirebaseConfigured && !USE_MONGO;
 const USE_FIREBASE_AUTH = isFirebaseConfigured; // Can use Firebase Auth even with Mongo Storage
 
+// --- Decryption for encrypted API responses ---
+const ENCRYPTION_KEY = 'EventHorizon2026SecureKey32Bytes'; // Must match server key
+
+async function decryptData(encryptedResponse: any): Promise<any> {
+  if (!encryptedResponse.encrypted) {
+    return encryptedResponse; // Not encrypted, return as-is
+  }
+
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32)),
+      { name: 'AES-GCM' },
+      false,
+      ['decrypt']
+    );
+
+    const iv = Uint8Array.from(atob(encryptedResponse.iv), c => c.charCodeAt(0));
+    const authTag = Uint8Array.from(atob(encryptedResponse.authTag), c => c.charCodeAt(0));
+    const encryptedData = Uint8Array.from(atob(encryptedResponse.data), c => c.charCodeAt(0));
+    
+    // Combine encrypted data with auth tag (Web Crypto expects them together)
+    const combined = new Uint8Array(encryptedData.length + authTag.length);
+    combined.set(encryptedData);
+    combined.set(authTag, encryptedData.length);
+
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      combined
+    );
+
+    const jsonStr = new TextDecoder().decode(decrypted);
+    return JSON.parse(jsonStr);
+  } catch (error) {
+    console.error('Decryption failed:', error);
+    return encryptedResponse; // Return original if decryption fails
+  }
+}
+
 // --- Helper Functions for MongoDB Data API ---
 
-async function mongoRequest(action: string, collection: string, body: any, retries = 3): Promise<any> {
+// User context for role-based filtering
+interface UserContext {
+  userId?: string;
+  userEmail?: string;
+}
+
+async function mongoRequest(action: string, collection: string, body: any, retries = 3, userContext?: UserContext): Promise<any> {
   if (!MONGO_CONFIG.endpoint) return null;
 
   try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    
+    // SECURITY: Send user context for server-side role-based filtering
+    if (userContext?.userId) {
+      headers['X-User-Id'] = userContext.userId;
+    }
+    if (userContext?.userEmail) {
+      headers['X-User-Email'] = userContext.userEmail;
+    }
+
     const response = await fetch(`${MONGO_CONFIG.endpoint}/${action}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         collection: collection,
         ...body
@@ -62,18 +118,25 @@ async function mongoRequest(action: string, collection: string, body: any, retri
       throw new Error(`MongoDB API Error: ${response.statusText} - ${errorText}`);
     }
 
-    return response.json();
+    const jsonResponse = await response.json();
+    
+    // SECURITY: Decrypt response if encrypted
+    if (jsonResponse.encrypted) {
+      return await decryptData(jsonResponse);
+    }
+    
+    return jsonResponse;
   } catch (error) {
     if (retries > 0) {
       console.log(`Fetch failed, retrying... (${retries} left)`);
       await new Promise(res => setTimeout(res, 1000));
-      return mongoRequest(action, collection, body, retries - 1);
+      return mongoRequest(action, collection, body, retries - 1, userContext);
     }
     throw error;
   }
 }
 
-export const getInitialData = async (userId?: string) => {
+export const getInitialData = async (userId?: string, userEmail?: string) => {
   if (USE_MONGO) {
     try {
       const requests = [
@@ -86,7 +149,7 @@ export const getInitialData = async (userId?: string) => {
           projection: { imageUrl: 0, description: 0 },
           sort: { date: -1 }
         },
-        // 2. Registrations (Fetch all to ensure consistency for now, can be optimized later)
+        // 2. Registrations (Server will filter based on user permissions)
         {
           collection: 'registrations',
           action: 'find',
@@ -99,7 +162,7 @@ export const getInitialData = async (userId?: string) => {
           filter: { userId: userId || "" },
           sort: { createdAt: -1 }
         },
-        // 4. Teams (Fetch all for client-side filtering to avoid N+1 requests)
+        // 4. Teams (Server will filter based on user permissions)
         {
           collection: 'teams',
           action: 'find',
@@ -108,7 +171,9 @@ export const getInitialData = async (userId?: string) => {
         }
       ];
 
-      const response = await mongoRequest('fetchBatch', '', { requests });
+      // SECURITY: Pass user context for server-side role-based filtering
+      const userContext: UserContext = { userId, userEmail };
+      const response = await mongoRequest('fetchBatch', '', { requests }, 3, userContext);
 
       if (response && response.results) {
         const events = (response.results[0]?.documents || []).map((doc: any) => ({
