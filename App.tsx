@@ -4956,7 +4956,7 @@ export default function App() {
                     )}
 
                     <div className="pt-6 mt-4 border-t border-slate-800 space-y-3">
-                      {selectedRegistrationDetails.status === 'approved' && (
+                      {selectedRegistrationDetails.status === RegistrationStatus.APPROVED && (
                         <button
                           onClick={() => {
                             setSelectedTicket(selectedRegistrationDetails);
@@ -5619,7 +5619,7 @@ export default function App() {
                         registrations.some(r =>
                           r.eventId === selectedEventForDetails.id &&
                           r.participantEmail === currentUser.email &&
-                          r.status === 'approved' &&
+                          r.status === RegistrationStatus.APPROVED &&
                           (r.attended || new Date(selectedEventForDetails.date) < new Date())
                         ) &&
                         !reviews.some(r => r.userId === currentUser.id) && (
