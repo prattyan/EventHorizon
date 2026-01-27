@@ -265,6 +265,24 @@ const getCroppedImg = (imageSrc: string, pixelCrop: any): Promise<string> => {
 
 
 
+const loadRazorpay = () => {
+  return new Promise((resolve) => {
+    if ((window as any).Razorpay) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => {
+      resolve(true);
+    };
+    script.onerror = () => {
+      resolve(false);
+    };
+    document.body.appendChild(script);
+  });
+};
+
 // --- Main App Component ---
 
 export default function App() {
@@ -389,6 +407,7 @@ export default function App() {
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentPromoCode, setPaymentPromoCode] = useState('');
   const [paymentAppliedPromo, setPaymentAppliedPromo] = useState<PromoCode | null>(null);
+  const [paymentPromoMessage, setPaymentPromoMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [selectedRegForPayment, setSelectedRegForPayment] = useState<{ reg: Registration, event: AppEvent } | null>(null);
 
   // --- Initialization ---
@@ -1436,6 +1455,7 @@ export default function App() {
     // Reset payment promo state
     setPaymentPromoCode('');
     setPaymentAppliedPromo(null);
+    setPaymentPromoMessage(null);
     setIsPaymentModalOpen(true);
   };
 
@@ -2647,169 +2667,9 @@ export default function App() {
           </div>
         )}
 
-        {/* AI-Powered Recommendations Section - Same style as Upcoming Experiences */}
-        {currentUser && currentUser.role === 'attendee' && !isAiUnavailable && (recommendedEvents.length > 0 || areRecommendationsLoading) && (
-          <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 ${!currentUser ? '' : 'pt-32'}`}>
-            {/* Section Header */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 md:mb-12">
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse shadow-[0_0_8px_rgba(251,146,60,0.8)]"></div>
-                  <span className="text-[10px] font-black text-orange-400 uppercase tracking-[0.4em]">AI Curated</span>
-                  <span className="text-[10px] font-medium text-slate-500 ml-2">Powered by Gemini</span>
-                </div>
-                <h2 className="text-3xl sm:text-4xl font-black font-outfit text-white tracking-tight">
-                  Recommended <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-amber-400">For You</span>
-                </h2>
-                <p className="text-slate-400 text-sm mt-2 max-w-md">Based on your past registrations, we think you'll love these events</p>
-              </div>
-            </div>
 
-            {/* Loading State */}
-            {areRecommendationsLoading ? (
-              <div className="flex flex-col items-center justify-center py-20 gap-6">
-                <div className="relative">
-                  <div className="w-16 h-16 rounded-full border-2 border-slate-800" />
-                  <div className="absolute inset-0 w-16 h-16 rounded-full border-2 border-transparent border-t-orange-500 animate-spin" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Sparkles className="w-6 h-6 text-orange-400 animate-pulse" />
-                  </div>
-                </div>
-                <div className="text-center">
-                  <p className="text-lg font-bold text-white font-outfit mb-1">Analyzing Your Preferences</p>
-                  <p className="text-sm text-slate-500">Our AI is finding the perfect events for you...</p>
-                </div>
-              </div>
-            ) : (
-              /* Cards Grid - Same style as Upcoming Experiences */
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10">
-                {recommendedEvents.slice(0, 3).map((event, idx) => {
-                  const isPast = isPastEvent(event);
-                  const isRegistered = registrations.some(r => r.eventId === event.id && r.participantEmail === currentUser?.email);
-                  const currentRegistrations = registrations.filter(r => r.eventId === event.id && r.status !== RegistrationStatus.REJECTED).length;
-                  const isFull = currentRegistrations >= event.capacity;
-                  const now = new Date();
-                  const startDate = new Date(event.date);
-                  const endDate = event.endDate ? new Date(event.endDate) : new Date(startDate.getTime() + 3600000);
-                  const isLive = now >= startDate && now <= endDate;
-                  const isPastBadge = now > endDate;
-                  const isClosed = event.isRegistrationOpen === false || now >= startDate;
 
-                  const remainingSpots = Math.max(0, Number(event.capacity) - currentRegistrations);
-
-                  return (
-                    <motion.div
-                      key={event.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.5, delay: idx * 0.1 }}
-                      className={`group glass-card rounded-[32px] overflow-hidden transition-all duration-500 flex flex-col h-full bg-[#0f172a]/40 border-orange-500/5 hover:border-orange-500/20 ${isPast ? 'opacity-50 grayscale' : ''}`}
-                    >
-                      <div className="relative h-56 overflow-hidden">
-                        <LazyEventImage eventId={event.id} initialSrc={event.imageUrl} alt={event.title} className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-700" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-
-                        {/* AI Pick Badge */}
-                        <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-orange-600 to-amber-500 text-[10px] font-black text-white uppercase tracking-wider shadow-xl shadow-orange-600/30">
-                          <Sparkles className="w-3 h-3" />
-                          AI Pick
-                        </div>
-
-                        <div className={`absolute top-4 right-4 backdrop-blur-md px-4 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl z-10 ${event.locationType === 'online' ? 'bg-orange-600/90 text-white border border-orange-400/30' : 'bg-slate-900/90 text-white border border-white/10'}`}>
-                          {event.locationType === 'online' ? 'Online' : 'Offline'}
-                        </div>
-
-                        <div className="absolute bottom-4 left-4 z-10 flex gap-2">
-                          <span className={`px-3 py-1 backdrop-blur-md rounded-lg text-[10px] font-bold border transition-colors ${remainingSpots === 0 ? 'bg-red-500/20 text-red-300 border-red-500/30' : remainingSpots <= 5 ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' : 'bg-white/10 text-white border-white/10 group-hover:bg-orange-600/50'}`}>
-                            {remainingSpots === 0 ? 'Sold Out' : `${remainingSpots} Spots Left`}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="p-8 flex-1 flex flex-col">
-                        <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 mb-6 bg-orange-500/5 w-fit px-4 py-1.5 rounded-full border border-orange-500/10">
-                          <Calendar className="w-3.5 h-3.5" />
-                          {format(new Date(event.date), 'MMMM d, yyyy')}
-                        </div>
-
-                        <h3
-                          onClick={() => setSelectedEventForDetails(event)}
-                          className="text-2xl font-black text-white mb-3 font-outfit decoration-orange-500/50 decoration-2 underline-offset-8 cursor-pointer group-hover:text-orange-300 group-hover:translate-x-1 transition-all"
-                        >
-                          {event.title}
-                        </h3>
-
-                        <div className="flex items-center gap-2 text-slate-400 text-xs mb-5 font-medium opacity-80">
-                          <MapPin className="w-4 h-4 text-orange-400" />
-                          {renderLocation(event.location, event.locationType, "truncate max-w-[200px]")}
-                        </div>
-
-                        <p className="text-slate-400 text-sm line-clamp-2 mb-8 flex-1 leading-relaxed opacity-70 group-hover:opacity-100 transition-opacity">{event.description}</p>
-
-                        <div className="flex flex-col gap-4 mt-auto">
-                          <div className="flex items-center justify-between">
-                            {isLive && (
-                              <div className="flex items-center gap-1.5 text-[10px] font-black text-rose-500 animate-pulse bg-rose-500/10 border border-rose-500/20 px-3 py-1 rounded-full uppercase tracking-wider">
-                                <div className="w-1.5 h-1.5 bg-rose-500 rounded-full shadow-[0_0_8px_rgba(244,63,94,0.8)]"></div>
-                                Live Now
-                              </div>
-                            )}
-                            {isFull && !isRegistered && !isPastBadge && (
-                              <div className="text-[10px] font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full uppercase tracking-wider">
-                                Event Full
-                              </div>
-                            )}
-                            {isPastBadge && (
-                              <div className="text-[10px] font-black text-slate-500 bg-slate-500/10 border border-slate-500/20 px-3 py-1 rounded-full uppercase tracking-wider">
-                                Inactive
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            {isRegistered ? (
-                              <button
-                                onClick={() => {
-                                  const reg = registrations.find(r => r.eventId === event.id && r.participantEmail === currentUser?.email);
-                                  if (reg) setSelectedRegistrationDetails(reg);
-                                }}
-                                className="flex-1 bg-white/5 border border-white/10 hover:bg-white/10 text-white font-bold font-outfit py-3 rounded-2xl transition-all flex items-center justify-center gap-2 group/btn"
-                              >
-                                <CheckCircle className="w-5 h-5 text-orange-400 group-hover/btn:scale-110 transition-transform" />
-                                View Registration
-                              </button>
-                            ) : (
-                              <button
-                                disabled={isFull || isClosed}
-                                onClick={async () => {
-                                  const fullEvent = await getEventById(event.id, { excludeImage: true });
-                                  setSelectedEventForReg(fullEvent || event);
-                                }}
-                                className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold font-outfit py-3 rounded-2xl transition-all shadow-lg shadow-orange-600/20 active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
-                              >
-                                {isFull ? 'Waitlisted' : (isClosed ? 'Registration Closed' : 'Secure Your Spot')}
-                              </button>
-                            )}
-
-                            <button
-                              onClick={() => setSelectedEventForDetails(event)}
-                              className="p-3 bg-white/5 border border-white/10 hover:bg-white/10 rounded-2xl text-slate-400 hover:text-white transition-all"
-                              title="View Details"
-                            >
-                              <ExternalLink className="w-5 h-5" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20 ${!currentUser ? '' : (currentUser.role === 'attendee' && !isAiUnavailable && (recommendedEvents.length > 0 || areRecommendationsLoading)) ? '' : 'pt-32'}`}>
+        <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-20 ${!currentUser ? '' : 'pt-32'}`}>
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 md:mb-12">
             <div>
               <div className="flex items-center gap-2 mb-2">
@@ -2846,6 +2706,167 @@ export default function App() {
                 Array(6).fill(0).map((_, i) => <EventCardSkeleton key={i} />)
               ) : (
                 upcomingEvents.map((event, idx) => renderEventCard(event, idx))
+              )}
+            </div>
+          )}
+          {/* AI-Powered Recommendations Section */}
+          {currentUser && currentUser.role === 'attendee' && !isAiUnavailable && (recommendedEvents.length > 0 || areRecommendationsLoading) && (
+            <div className="mt-32">
+              {/* Section Header */}
+              <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8 md:mb-12">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse shadow-[0_0_8px_rgba(251,146,60,0.8)]"></div>
+                    <span className="text-[10px] font-black text-orange-400 uppercase tracking-[0.4em]">AI Curated</span>
+                    <span className="text-[10px] font-medium text-slate-500 ml-2">Powered by Gemini</span>
+                  </div>
+                  <h2 className="text-3xl sm:text-4xl font-black font-outfit text-white tracking-tight">
+                    Recommended <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-400 to-amber-400">For You</span>
+                  </h2>
+                  <p className="text-slate-400 text-sm mt-2 max-w-md">Based on your past registrations, we think you'll love these events</p>
+                </div>
+              </div>
+
+              {/* Loading State */}
+              {areRecommendationsLoading ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-6">
+                  <div className="relative">
+                    <div className="w-16 h-16 rounded-full border-2 border-slate-800" />
+                    <div className="absolute inset-0 w-16 h-16 rounded-full border-2 border-transparent border-t-orange-500 animate-spin" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Sparkles className="w-6 h-6 text-orange-400 animate-pulse" />
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-white font-outfit mb-1">Analyzing Your Preferences</p>
+                    <p className="text-sm text-slate-500">Our AI is finding the perfect events for you...</p>
+                  </div>
+                </div>
+              ) : (
+                /* Cards Grid - Same style as Upcoming Experiences */
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-10">
+                  {recommendedEvents.slice(0, 3).map((event, idx) => {
+                    const isPast = isPastEvent(event);
+                    const isRegistered = registrations.some(r => r.eventId === event.id && r.participantEmail === currentUser?.email);
+                    const currentRegistrations = registrations.filter(r => r.eventId === event.id && r.status !== RegistrationStatus.REJECTED).length;
+                    const isFull = currentRegistrations >= event.capacity;
+                    const now = new Date();
+                    const startDate = new Date(event.date);
+                    const endDate = event.endDate ? new Date(event.endDate) : new Date(startDate.getTime() + 3600000);
+                    const isLive = now >= startDate && now <= endDate;
+                    const isPastBadge = now > endDate;
+                    const isClosed = event.isRegistrationOpen === false || now >= startDate;
+
+                    const remainingSpots = Math.max(0, Number(event.capacity) - currentRegistrations);
+
+                    return (
+                      <motion.div
+                        key={event.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.5, delay: idx * 0.1 }}
+                        className={`group glass-card rounded-[32px] overflow-hidden transition-all duration-500 flex flex-col h-full bg-[#0f172a]/40 border-orange-500/5 hover:border-orange-500/20 ${isPast ? 'opacity-50 grayscale' : ''}`}
+                      >
+                        <div className="relative h-56 overflow-hidden">
+                          <LazyEventImage eventId={event.id} initialSrc={event.imageUrl} alt={event.title} className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-700" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+
+                          {/* AI Pick Badge */}
+                          <div className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-orange-600 to-amber-500 text-[10px] font-black text-white uppercase tracking-wider shadow-xl shadow-orange-600/30">
+                            <Sparkles className="w-3 h-3" />
+                            AI Pick
+                          </div>
+
+                          <div className={`absolute top-4 right-4 backdrop-blur-md px-4 py-1.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl z-10 ${event.locationType === 'online' ? 'bg-orange-600/90 text-white border border-orange-400/30' : 'bg-slate-900/90 text-white border border-white/10'}`}>
+                            {event.locationType === 'online' ? 'Online' : 'Offline'}
+                          </div>
+
+                          <div className="absolute bottom-4 left-4 z-10 flex gap-2">
+                            <span className={`px-3 py-1 backdrop-blur-md rounded-lg text-[10px] font-bold border transition-colors ${remainingSpots === 0 ? 'bg-red-500/20 text-red-300 border-red-500/30' : remainingSpots <= 5 ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' : 'bg-white/10 text-white border-white/10 group-hover:bg-orange-600/50'}`}>
+                              {remainingSpots === 0 ? 'Sold Out' : `${remainingSpots} Spots Left`}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="p-8 flex-1 flex flex-col">
+                          <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-orange-500 mb-6 bg-orange-500/5 w-fit px-4 py-1.5 rounded-full border border-orange-500/10">
+                            <Calendar className="w-3.5 h-3.5" />
+                            {format(new Date(event.date), 'MMMM d, yyyy')}
+                          </div>
+
+                          <h3
+                            onClick={() => setSelectedEventForDetails(event)}
+                            className="text-2xl font-black text-white mb-3 font-outfit decoration-orange-500/50 decoration-2 underline-offset-8 cursor-pointer group-hover:text-orange-300 group-hover:translate-x-1 transition-all"
+                          >
+                            {event.title}
+                          </h3>
+
+                          <div className="flex items-center gap-2 text-slate-400 text-xs mb-5 font-medium opacity-80">
+                            <MapPin className="w-4 h-4 text-orange-400" />
+                            {renderLocation(event.location, event.locationType, "truncate max-w-[200px]")}
+                          </div>
+
+                          <p className="text-slate-400 text-sm line-clamp-2 mb-8 flex-1 leading-relaxed opacity-70 group-hover:opacity-100 transition-opacity">{event.description}</p>
+
+                          <div className="flex flex-col gap-4 mt-auto">
+                            <div className="flex items-center justify-between">
+                              {isLive && (
+                                <div className="flex items-center gap-1.5 text-[10px] font-black text-rose-500 animate-pulse bg-rose-500/10 border border-rose-500/20 px-3 py-1 rounded-full uppercase tracking-wider">
+                                  <div className="w-1.5 h-1.5 bg-rose-500 rounded-full shadow-[0_0_8px_rgba(244,63,94,0.8)]"></div>
+                                  Live Now
+                                </div>
+                              )}
+                              {isFull && !isRegistered && !isPastBadge && (
+                                <div className="text-[10px] font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full uppercase tracking-wider">
+                                  Event Full
+                                </div>
+                              )}
+                              {isPastBadge && (
+                                <div className="text-[10px] font-black text-slate-500 bg-slate-500/10 border border-slate-500/20 px-3 py-1 rounded-full uppercase tracking-wider">
+                                  Inactive
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              {isRegistered ? (
+                                <button
+                                  onClick={() => {
+                                    const reg = registrations.find(r => r.eventId === event.id && r.participantEmail === currentUser?.email);
+                                    if (reg) setSelectedRegistrationDetails(reg);
+                                  }}
+                                  className="flex-1 bg-white/5 border border-white/10 hover:bg-white/10 text-white font-bold font-outfit py-3 rounded-2xl transition-all flex items-center justify-center gap-2 group/btn"
+                                >
+                                  <CheckCircle className="w-5 h-5 text-orange-400 group-hover/btn:scale-110 transition-transform" />
+                                  View Registration
+                                </button>
+                              ) : (
+                                <button
+                                  disabled={isFull || isClosed}
+                                  onClick={async () => {
+                                    const fullEvent = await getEventById(event.id, { excludeImage: true });
+                                    setSelectedEventForReg(fullEvent || event);
+                                  }}
+                                  className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold font-outfit py-3 rounded-2xl transition-all shadow-lg shadow-orange-600/20 active:scale-95 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
+                                >
+                                  {isFull ? 'Waitlisted' : (isClosed ? 'Registration Closed' : 'Secure Your Spot')}
+                                </button>
+                              )}
+
+                              <button
+                                onClick={() => setSelectedEventForDetails(event)}
+                                className="p-3 bg-white/5 border border-white/10 hover:bg-white/10 rounded-2xl text-slate-400 hover:text-white transition-all"
+                                title="View Details"
+                              >
+                                <ExternalLink className="w-5 h-5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           )}
@@ -4308,14 +4329,33 @@ export default function App() {
                       placeholder="CODE"
                     />
                     <button
-                      onClick={() => {
-                        const code = selectedRegForPayment.event.promoCodes?.find(c => c.code === paymentPromoCode);
-                        if (code) {
-                          setPaymentAppliedPromo(code);
-                          addToast('Code applied!', 'success');
-                        } else {
-                          addToast('Invalid code', 'error');
-                          setPaymentAppliedPromo(null);
+                      onClick={async () => {
+                        try {
+                          setPaymentPromoMessage(null);
+                          addToast('Verifying code...', 'info');
+                          const res = await fetch('/api/verify-promo', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              eventId: selectedRegForPayment.event.id,
+                              code: paymentPromoCode
+                            })
+                          });
+                          const data = await res.json();
+
+                          if (data.success && data.promo) {
+                            setPaymentAppliedPromo(data.promo);
+                            setPaymentPromoMessage({ type: 'success', text: `Code applied! ${data.promo.type === 'percentage' ? `${data.promo.value}% OFF` : `₹${data.promo.value} OFF`}` });
+                            addToast('Code applied!', 'success');
+                          } else {
+                            addToast(data.message || 'Invalid code', 'error');
+                            setPaymentPromoMessage({ type: 'error', text: data.message || 'Invalid promo code' });
+                            setPaymentAppliedPromo(null);
+                          }
+                        } catch (e) {
+                          addToast('Failed to verify code', 'error');
+                          setPaymentPromoMessage({ type: 'error', text: 'Failed to verify code' });
+                          console.error(e);
                         }
                       }}
                       className="bg-slate-800 hover:bg-slate-700 text-white px-4 rounded-xl font-bold text-sm transition-colors"
@@ -4323,6 +4363,11 @@ export default function App() {
                       Apply
                     </button>
                   </div>
+                  {paymentPromoMessage && (
+                    <p className={`text-[10px] mt-2 font-medium ${paymentPromoMessage.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
+                      {paymentPromoMessage.text}
+                    </p>
+                  )}
                 </div>
 
                 <button

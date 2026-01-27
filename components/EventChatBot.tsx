@@ -169,16 +169,11 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                                         ) : (
                                             <ReactMarkdown
                                                 components={{
-                                                    // @ts-ignore
-                                                    strong: ({ node, ...props }) => <span className="font-bold text-orange-400" {...props} />,
-                                                    // @ts-ignore
-                                                    p: ({ node, ...props }) => <p className="mb-2 last:mb-0 leading-relaxed" {...props} />,
-                                                    // @ts-ignore
-                                                    ul: ({ node, ordered, depth, ...props }) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
-                                                    // @ts-ignore
-                                                    li: ({ node, ordered, index, checked, ...props }) => <li className="pl-1" {...props} />,
-                                                    // @ts-ignore
-                                                    a: ({ node, ...props }) => <a className="text-orange-400 underline hover:text-orange-300" target="_blank" rel="noopener noreferrer" {...props} />,
+                                                    strong: ({ node, ...props }: any) => <span className="font-bold text-orange-400" {...props} />,
+                                                    p: ({ node, ...props }: any) => <p className="mb-2 last:mb-0 leading-relaxed" {...props} />,
+                                                    ul: ({ node, ...props }: any) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
+                                                    li: ({ node, ...props }: any) => <li className="pl-1" {...props} />,
+                                                    a: ({ node, ...props }: any) => <a className="text-orange-400 underline hover:text-orange-300" target="_blank" rel="noopener noreferrer" {...props} />,
                                                 }}
                                             >
                                                 {msg.text}

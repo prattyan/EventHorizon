@@ -63,7 +63,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // ============================================
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
-const RATE_LIMIT_MAX = 100; // Max requests per window per IP
+const RATE_LIMIT_MAX = 1000; // Max requests per window per IP
 
 app.use((req, res, next) => {
     const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -434,10 +434,34 @@ app.post('/api/verify-payment', (req, res) => {
     hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
     const generated_signature = hmac.digest('hex');
 
+
     if (generated_signature === razorpay_signature) {
         res.json({ success: true, message: "Payment Verified" });
     } else {
         res.status(400).json({ success: false, message: "Invalid Signature" });
+    }
+});
+
+app.post('/api/verify-promo', async (req, res) => {
+    const { eventId, code } = req.body;
+    if (!db) return res.status(500).json({ error: "Database not connected" });
+
+    try {
+        const event = await db.collection('events').findOne({ id: eventId });
+        if (!event) {
+            return res.status(404).json({ success: false, message: "Event not found" });
+        }
+
+        const promo = event.promoCodes?.find(p => p.code === code);
+        if (promo) {
+            // Check limits if applicable (future enhancement)
+            res.json({ success: true, promo });
+        } else {
+            res.json({ success: false, message: "Invalid promo code" });
+        }
+    } catch (error) {
+        console.error("Promo verification failed", error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
