@@ -207,18 +207,18 @@ async def get_embedding(text: str) -> list[float]:
     """Generates embedding using Gemini API."""
     if not GEMINI_API_KEY:
         return []
-    try:
-        # Using models/embedding-001 or models/text-embedding-004
-        result = await asyncio.to_thread(
-            genai.embed_content,
-            model="models/text-embedding-004",
-            content=text,
-            task_type="retrieval_document"
-        )
-        return result['embedding']
-    except Exception as e:
-        print(f"Embedding error: {e}")
-        return []
+    for model_name in ["models/gemini-embedding-001", "models/gemini-embedding-2", "models/text-embedding-004"]:
+        try:
+            result = await asyncio.to_thread(
+                genai.embed_content,
+                model=model_name,
+                content=text
+            )
+            if result and "embedding" in result:
+                return result["embedding"]
+        except Exception:
+            continue
+    return []
 
 def cosine_similarity(vec_a, vec_b):
     """Calculates cosine similarity between two vectors."""
@@ -663,7 +663,7 @@ async def data_action(action: str, request: Request):
                 )
 
             # User context from headers
-            user_context = {
+            user_context: dict[str, Any] = {
                 "userId": request.headers.get("x-user-id"),
                 "userEmail": request.headers.get("x-user-email"),
                 "role": request.headers.get("x-user-role"),
@@ -1347,8 +1347,11 @@ combined_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 
 if __name__ == "__main__":
+    if _BACKEND_DIR not in sys.path:
+        sys.path.insert(0, _BACKEND_DIR)
+    app_import = "backend.main:combined_app" if os.path.exists(os.path.join(os.getcwd(), "backend")) else "main:combined_app"
     uvicorn.run(
-        "main:combined_app",
+        app_import,
         host="0.0.0.0",
         port=PORT,
         reload=True,
