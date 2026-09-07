@@ -4,6 +4,7 @@ import { Send, X, Loader2, Sparkles, Bot, AlertCircle, RefreshCw } from 'lucide-
 import { Event } from '../types';
 import {
     chatWithAI,
+    streamChatWithAI,
     getGeminiStatus,
     onGeminiStatusChange,
     checkGeminiHealth,
@@ -35,8 +36,7 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
         id: 'welcome',
         text: currentStatus.isOnline
             ? "Hi! I'm your Eventron AI assistant. Ask me anything about our upcoming events!"
-            : `⚠️ **AI Assistant Offline**\n\n${
-                currentStatus.errorMessage || 'The Gemini API is inactive, suspended, or unconfigured.'
+            : `**AI Assistant Offline**\n\n${currentStatus.errorMessage || 'The Gemini API is inactive, suspended, or unconfigured.'
             }\n\nTo enable the AI assistant, please ensure an active \`VITE_GEMINI_API_KEY\` is configured in your \`.env\` file.`,
         sender: 'bot',
         timestamp: new Date()
@@ -46,10 +46,71 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
     const [inputText, setInputText] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const chatWindowRef = useRef<HTMLDivElement>(null);
+    const messagesContainerRef = useRef<HTMLDivElement>(null);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     };
+
+    // Prevent background page from scrolling up/down when cursor is over the chatbot
+    useEffect(() => {
+        const chatEl = chatWindowRef.current;
+        if (!isOpen || !chatEl) return;
+
+        const handleWheel = (e: WheelEvent) => {
+            const messagesEl = messagesContainerRef.current;
+            if (!messagesEl) {
+                e.preventDefault();
+                return;
+            }
+
+            // If wheeling over non-scrollable parts of chatbot (header, input, alert banner, etc.)
+            if (!messagesEl.contains(e.target as Node)) {
+                e.preventDefault();
+                return;
+            }
+
+            // Inside messages container: isolate scroll and prevent propagation to background
+            const { scrollTop, scrollHeight, clientHeight } = messagesEl;
+            const isScrollable = scrollHeight > clientHeight;
+
+            if (!isScrollable) {
+                e.preventDefault();
+                return;
+            }
+
+            const isScrollingDown = e.deltaY > 0;
+            const isScrollingUp = e.deltaY < 0;
+
+            // Reached bottom and attempting to scroll down
+            if (isScrollingDown && Math.ceil(scrollTop + clientHeight) >= scrollHeight - 1) {
+                e.preventDefault();
+                return;
+            }
+
+            // Reached top and attempting to scroll up
+            if (isScrollingUp && scrollTop <= 0) {
+                e.preventDefault();
+                return;
+            }
+        };
+
+        const handleTouchMove = (e: TouchEvent) => {
+            const messagesEl = messagesContainerRef.current;
+            if (!messagesEl || !messagesEl.contains(e.target as Node)) {
+                e.preventDefault();
+            }
+        };
+
+        chatEl.addEventListener('wheel', handleWheel, { passive: false });
+        chatEl.addEventListener('touchmove', handleTouchMove, { passive: false });
+
+        return () => {
+            chatEl.removeEventListener('wheel', handleWheel);
+            chatEl.removeEventListener('touchmove', handleTouchMove);
+        };
+    }, [isOpen]);
 
     // Subscribe to status changes from geminiService
     useEffect(() => {
@@ -102,6 +163,9 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
         setInputText('');
         setIsLoading(true);
 
+        const botMsgId = (Date.now() + 1).toString();
+        let hasStartedStreaming = false;
+
         try {
             // Prepare context from events
             const context = events.map(e => ({
@@ -115,23 +179,36 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                 capacity: e.capacity
             }));
 
-            const responseText = await chatWithAI(userMsg.text, context);
-
-            const botMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                text: responseText,
-                sender: 'bot',
-                timestamp: new Date()
-            };
-            setMessages(prev => [...prev, botMsg]);
+            await streamChatWithAI(userMsg.text, context, (_chunk, fullTextSoFar) => {
+                if (!hasStartedStreaming) {
+                    hasStartedStreaming = true;
+                    setIsLoading(false);
+                    setMessages(prev => [
+                        ...prev,
+                        {
+                            id: botMsgId,
+                            text: fullTextSoFar,
+                            sender: 'bot',
+                            timestamp: new Date()
+                        }
+                    ]);
+                } else {
+                    setMessages(prev =>
+                        prev.map(m => m.id === botMsgId ? { ...m, text: fullTextSoFar } : m)
+                    );
+                }
+            });
         } catch (error) {
-            const errorMsg: Message = {
-                id: (Date.now() + 1).toString(),
-                text: "Sorry, I encountered an error processing your question. Please try again.",
-                sender: 'bot',
-                timestamp: new Date()
-            };
-            setMessages(prev => [...prev, errorMsg]);
+            setIsLoading(false);
+            if (!hasStartedStreaming) {
+                const errorMsg: Message = {
+                    id: botMsgId,
+                    text: "Sorry, I encountered an error processing your question. Please try again.",
+                    sender: 'bot',
+                    timestamp: new Date()
+                };
+                setMessages(prev => [...prev, errorMsg]);
+            }
         } finally {
             setIsLoading(false);
         }
@@ -153,20 +230,19 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                             isOnline
                                 ? "Eventron AI Assistant (Online)"
                                 : isChecking
-                                ? "Eventron AI Assistant (Checking Status...)"
-                                : `Eventron AI Assistant (Offline: ${statusState.errorMessage || 'API Inactive'})`
+                                    ? "Eventron AI Assistant (Checking Status...)"
+                                    : `Eventron AI Assistant (Offline: ${statusState.errorMessage || 'API Inactive'})`
                         }
                         className="fixed bottom-6 right-6 z-50 w-14 h-14 bg-gradient-to-r from-orange-600 to-amber-600 rounded-full shadow-lg shadow-orange-600/30 flex items-center justify-center text-white border border-white/10 group"
                     >
                         <Sparkles className={`w-6 h-6 ${isOnline ? 'animate-pulse' : 'opacity-70'}`} />
                         <div
-                            className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-900 shadow-sm ${
-                                isOnline
+                            className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-900 shadow-sm ${isOnline
                                     ? 'bg-emerald-500 animate-pulse'
                                     : isChecking
-                                    ? 'bg-amber-400 animate-pulse'
-                                    : 'bg-rose-500'
-                            }`}
+                                        ? 'bg-amber-400 animate-pulse'
+                                        : 'bg-rose-500'
+                                }`}
                             title={isOnline ? "Online" : isChecking ? "Checking..." : "Offline"}
                         />
                     </motion.button>
@@ -177,10 +253,12 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
             <AnimatePresence>
                 {isOpen && (
                     <motion.div
+                        ref={chatWindowRef}
                         initial={{ opacity: 0, y: 50, scale: 0.9 }}
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: 50, scale: 0.9 }}
-                        className="fixed bottom-6 right-6 z-50 w-[90vw] sm:w-[380px] h-[500px] max-h-[80vh] bg-slate-900 rounded-3xl shadow-2xl border border-white/10 flex flex-col overflow-hidden"
+                        className="fixed bottom-6 right-6 z-50 w-[90vw] sm:w-[380px] h-[500px] max-h-[80vh] bg-slate-900 rounded-3xl shadow-2xl border border-white/10 flex flex-col overflow-hidden overscroll-contain"
+                        style={{ overscrollBehavior: 'contain' }}
                     >
                         {/* Header */}
                         <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-4 border-b border-white/5 flex items-center justify-between">
@@ -192,22 +270,20 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                                     <h3 className="font-bold text-white text-sm">Eventron Assistant</h3>
                                     <div className="flex items-center gap-1.5">
                                         <span
-                                            className={`w-2 h-2 rounded-full ${
-                                                isOnline
+                                            className={`w-2 h-2 rounded-full ${isOnline
                                                     ? 'bg-emerald-500 animate-pulse'
                                                     : isChecking
-                                                    ? 'bg-amber-400 animate-pulse'
-                                                    : 'bg-rose-500'
-                                            }`}
+                                                        ? 'bg-amber-400 animate-pulse'
+                                                        : 'bg-rose-500'
+                                                }`}
                                         />
                                         <span
-                                            className={`text-[10px] font-semibold ${
-                                                isOnline
+                                            className={`text-[10px] font-semibold ${isOnline
                                                     ? 'text-emerald-400'
                                                     : isChecking
-                                                    ? 'text-amber-400'
-                                                    : 'text-rose-400'
-                                            }`}
+                                                        ? 'text-amber-400'
+                                                        : 'text-rose-400'
+                                                }`}
                                         >
                                             {isOnline ? 'Online' : isChecking ? 'Checking...' : 'Offline'}
                                         </span>
@@ -244,8 +320,8 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                                         {statusState.reason === 'missing_key'
                                             ? 'Gemini API Not Configured'
                                             : statusState.reason === 'suspended_account'
-                                            ? 'Gemini API Inactive / Suspended'
-                                            : 'Gemini API Offline'}
+                                                ? 'Gemini API Inactive / Suspended'
+                                                : 'Gemini API Offline'}
                                     </p>
                                     <p className="text-[11px] text-rose-300/80 leading-snug mt-0.5">
                                         {statusState.errorMessage || 'The configured API key is not active. Please check your .env file.'}
@@ -255,18 +331,21 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                         )}
 
                         {/* Messages Area */}
-                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-950/50">
+                        <div
+                            ref={messagesContainerRef}
+                            className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-950/50 overscroll-contain"
+                            style={{ overscrollBehavior: 'contain' }}
+                        >
                             {messages.map((msg) => (
                                 <div
                                     key={msg.id}
                                     className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                                 >
                                     <div
-                                        className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm ${
-                                            msg.sender === 'user'
+                                        className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm ${msg.sender === 'user'
                                                 ? 'bg-orange-600 text-white rounded-tr-none'
                                                 : 'bg-slate-800 text-slate-200 rounded-tl-none border border-white/5'
-                                        }`}
+                                            }`}
                                     >
                                         {msg.sender === 'user' ? (
                                             msg.text
@@ -299,9 +378,8 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                                             </ReactMarkdown>
                                         )}
                                         <div
-                                            className={`text-[10px] mt-1 opacity-50 ${
-                                                msg.sender === 'user' ? 'text-orange-200' : 'text-slate-400'
-                                            }`}
+                                            className={`text-[10px] mt-1 opacity-50 ${msg.sender === 'user' ? 'text-orange-200' : 'text-slate-400'
+                                                }`}
                                         >
                                             {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                         </div>
@@ -330,8 +408,8 @@ const EventChatBot: React.FC<EventChatBotProps> = ({ events, currentUserId }) =>
                                         isOnline
                                             ? "Ask about events..."
                                             : isChecking
-                                            ? "Checking Gemini API status..."
-                                            : "Chat unavailable (Gemini API Offline)"
+                                                ? "Checking Gemini API status..."
+                                                : "Chat unavailable (Gemini API Offline)"
                                     }
                                     disabled={!isOnline || isLoading || isChecking}
                                     className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-orange-500 transition-colors placeholder:text-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"

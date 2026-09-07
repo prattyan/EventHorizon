@@ -417,6 +417,19 @@ export default function App() {
     setShowAllAttendees(false);
   }, [selectedEventForDetails?.id]);
 
+  // Keep ref to selectedEventForDetails so socket listeners have fresh context
+  const selectedEventForDetailsRef = useRef<AppEvent | null>(null);
+  useEffect(() => {
+    selectedEventForDetailsRef.current = selectedEventForDetails;
+  }, [selectedEventForDetails]);
+
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (detailsTab === 'discussion' && messages.length > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, detailsTab]);
+
   // Organizer View State
   const [organizerSelectedEventId, setOrganizerSelectedEventId] = useState<string | null>(null);
   const [organizerView, setOrganizerView] = useState<'overview' | 'events'>('overview');
@@ -521,9 +534,29 @@ export default function App() {
             return u;
           });
         }
-      } else if (data.collection === 'registrations') {
+      } else if (data.collection === 'registrations' || data.collection === 'teams') {
         // Just reload data, don't show "spots left" toast to avoid requiring events/registrations in deps
         loadData(true);
+      } else if (data.collection === 'messages') {
+        const eventId = data.eventId || data.document?.eventId;
+        const currentEvent = selectedEventForDetailsRef.current;
+        if (currentEvent && String(eventId) === String(currentEvent.id)) {
+          if (data.action === 'insert' && data.document) {
+            const newDoc = data.document;
+            setMessages(prev => {
+              if (prev.some(m => (m.id && m.id === newDoc.id) || (m._id && m._id === newDoc._id))) {
+                return prev;
+              }
+              return [...prev, newDoc].sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+            });
+          } else {
+            getMessages(currentEvent.id).then(msgs => {
+              if (selectedEventForDetailsRef.current?.id === currentEvent.id) {
+                setMessages(msgs);
+              }
+            });
+          }
+        }
       }
     };
 
@@ -629,14 +662,10 @@ export default function App() {
     setDeleteEmailOtp('');
     setIsSendingDeleteOtp(true);
     try {
-      const res: any = await sendEmailDeleteOtp(currentUser.email, currentUser.id);
+      await sendEmailDeleteOtp(currentUser.email, currentUser.id);
       setDeleteOtpSent(true);
-      if (res?.otp_preview) {
-        addToast(`[DEV MODE] OTP: ${res.otp_preview}`, 'info');
-        setDeleteEmailOtp(res.otp_preview);
-      } else {
-        addToast(`Verification code sent to ${currentUser.email}`, 'success');
-      }
+      setDeleteEmailOtp('');
+      addToast(`Verification code sent to ${currentUser.email}`, 'success');
       setIsDeleteModalOpen(true);
     } catch (e: any) {
       console.error(e);
@@ -650,14 +679,10 @@ export default function App() {
     if (!currentUser?.email) return;
     setIsSendingDeleteOtp(true);
     try {
-      const res: any = await sendEmailDeleteOtp(currentUser.email, currentUser.id);
+      await sendEmailDeleteOtp(currentUser.email, currentUser.id);
       setDeleteOtpSent(true);
-      if (res?.otp_preview) {
-        addToast(`[DEV MODE] OTP: ${res.otp_preview}`, 'info');
-        setDeleteEmailOtp(res.otp_preview);
-      } else {
-        addToast(`Verification code sent to ${currentUser.email}`, 'success');
-      }
+      setDeleteEmailOtp('');
+      addToast(`Verification code sent to ${currentUser.email}`, 'success');
     } catch (e: any) {
       console.error(e);
       addToast(`Failed to send verification code: ${e.message || e}`, 'error');
@@ -1444,8 +1469,10 @@ export default function App() {
           }
 
           const teamRegs = registrations.filter(r => r.teamId === team.id);
-          if (teamRegs.some(r => r.status !== RegistrationStatus.TEAM_AWAITING_SUBMISSION)) {
-            addToast("This team has already been submitted for approval", "error");
+          const leaderReg = teamRegs.find(r => r.isTeamLeader);
+
+          if (leaderReg && leaderReg.status === RegistrationStatus.REJECTED) {
+            addToast("This team's registration was rejected", "error");
             setIsRegistering(false);
             return;
           }
@@ -1455,11 +1482,21 @@ export default function App() {
             setIsRegistering(false);
             return;
           }
+
           await joinTeam(team.id, { userId: currentUser.id, userName: currentUser.name, email: currentUser.email });
           finalRegData.teamId = team.id;
           finalRegData.teamName = team.name;
           finalRegData.isTeamLeader = false;
           finalRegData.participationType = 'team';
+
+          // If leader is already approved, new member gets approved immediately!
+          if (leaderReg && leaderReg.status === RegistrationStatus.APPROVED) {
+            finalRegData.status = RegistrationStatus.APPROVED;
+          } else if (leaderReg && leaderReg.status === RegistrationStatus.PENDING) {
+            finalRegData.status = RegistrationStatus.PENDING;
+          } else if (leaderReg && leaderReg.status === RegistrationStatus.AWAITING_PAYMENT) {
+            finalRegData.status = RegistrationStatus.AWAITING_PAYMENT;
+          }
         }
       } else {
         finalRegData.participationType = 'individual';
@@ -1494,21 +1531,21 @@ export default function App() {
 
   const handleTeamSubmit = async (teamId: string) => {
     const teamRegs = registrations.filter(r => r.teamId === teamId);
-    if (teamRegs.length === 0) return;
-    
-    const event = events.find(e => e.id === teamRegs[0].eventId);
+    const teamObj = teams.find(t => t.id === teamId);
+    const event = events.find(e => e.id === (teamRegs[0]?.eventId || teamObj?.eventId));
     const minSize = event?.minTeamSize || 1;
+    const membersCount = Math.max(teamRegs.length, teamObj?.members?.length || 0);
     
-    if (teamRegs.length < minSize) {
-      addToast(`Your team is incomplete. You need at least ${minSize} members to submit (Current: ${teamRegs.length}).`, 'error');
+    if (membersCount < minSize) {
+      addToast(`Your team is incomplete. You need at least ${minSize} members to submit (Current: ${membersCount}).`, 'error');
       return;
     }
 
-    if (!window.confirm(`Submit team "${teamRegs[0].teamName}" with ${teamRegs.length} members for organizer approval?`)) return;
+    const teamName = teamRegs[0]?.teamName || teamObj?.name || 'Team';
+    if (!window.confirm(`Submit team "${teamName}" with ${membersCount} members for organizer approval?`)) return;
     
     setIsRegistering(true);
     try {
-      const teamRegs = registrations.filter(r => r.teamId === teamId);
       await Promise.all(teamRegs.map(r => updateRegistrationStatus(r.id, RegistrationStatus.PENDING)));
       addToast('Team registration submitted for approval!', 'success');
       loadData(true);
@@ -1524,58 +1561,66 @@ export default function App() {
   const handleStatusUpdate = async (regId: string, status: RegistrationStatus) => {
     // Check if this is a paid event and we are trying to approve it without payment
     const reg = registrations.find(r => r.id === regId);
+    if (!reg) return;
     const event = events.find(e => e.id === reg?.eventId);
 
     let finalStatus = status;
     const isPaidEvent = event && (event.isPaid || (event.price && Number(event.price) > 0));
 
     if (status === RegistrationStatus.APPROVED && isPaidEvent) {
-      // If event is paid, check if payment is already done (which shouldn't happen in this flow usually, but safe to check)
-      // If payment pending, set to AWAITING_PAYMENT instead
-      // Note: We need to check if paymentDetails exists and is COMPLETED.
+      // If event is paid, check if payment is already done
       const isPaid = reg?.paymentDetails?.status === PaymentStatus.COMPLETED;
       if (!isPaid) {
         finalStatus = RegistrationStatus.AWAITING_PAYMENT;
       }
     }
 
-    // 1. Update Database
-    await updateRegistrationStatus(regId, finalStatus);
+    // Check if this registration belongs to a team
+    // If leader's approval is done, all team members get approval
+    const isTeamReg = reg.participationType === 'team' && reg.teamId;
+    const teamRegs = isTeamReg ? registrations.filter(r => r.teamId === reg.teamId) : [reg];
 
-    // 2. Send Notification
-    if (reg && event) {
-      addToast(`Updating status and notifying user...`, 'info');
+    // 1. Update Database for all team registrations
+    await Promise.all(teamRegs.map(r => updateRegistrationStatus(r.id, finalStatus)));
 
-      // Determine message based on FINAL status
-      let title = 'Registration Update';
-      let message = `Your registration status for "${event.title}" has been updated to ${finalStatus}.`;
-      let type: 'info' | 'success' | 'warning' = 'info';
+    // 2. Send Notification to all updated participants
+    for (const targetReg of teamRegs) {
+      if (event) {
+        let title = 'Registration Update';
+        let message = `Your registration status for "${event.title}" has been updated to ${finalStatus}.`;
+        let type: 'info' | 'success' | 'warning' = 'info';
 
-      if (finalStatus === RegistrationStatus.APPROVED) {
-        title = 'Registration Approved!';
-        message = `You're in! Your registration for "${event.title}" was approved.`;
-        type = 'success';
-      } else if (finalStatus === RegistrationStatus.AWAITING_PAYMENT) {
-        title = 'Action Required: Payment';
-        message = `Your registration for "${event.title}" is tentatively approved. Please proceed to payment to confirm your spot.`;
-        type = 'warning';
+        if (finalStatus === RegistrationStatus.APPROVED) {
+          title = 'Registration Approved!';
+          message = isTeamReg
+            ? `Your team "${targetReg.teamName || 'Team'}" has been approved for "${event.title}"!`
+            : `You're in! Your registration for "${event.title}" was approved.`;
+          type = 'success';
+        } else if (finalStatus === RegistrationStatus.AWAITING_PAYMENT) {
+          title = 'Action Required: Payment';
+          message = `Your registration for "${event.title}" is tentatively approved. Please proceed to payment to confirm your spot.`;
+          type = 'warning';
+        } else if (finalStatus === RegistrationStatus.REJECTED) {
+          title = 'Registration Rejected';
+          message = `Your registration for "${event.title}" has been rejected.`;
+          type = 'warning';
+        }
+
+        await sendStatusUpdateEmail(targetReg.participantEmail, targetReg.participantName, event.title, finalStatus);
+
+        await addNotification({
+          userId: targetReg.participantId,
+          title: title,
+          message: message,
+          type: type,
+          link: 'my-tickets'
+        });
       }
-
-      await sendStatusUpdateEmail(reg.participantEmail, reg.participantName, event.title, finalStatus);
-
-      // Add In-App Notification
-      await addNotification({
-        userId: reg.participantId,
-        title: title,
-        message: message,
-        type: type,
-        link: 'my-tickets'
-      });
     }
 
     // 3. Refresh Data
     await loadData();
-    addToast(`Participant status updated to ${finalStatus}`, 'success');
+    addToast(isTeamReg ? `Team "${reg.teamName || 'Team'}" updated to ${finalStatus}` : `Participant status updated to ${finalStatus}`, 'success');
   };
 
   const handleLatePayment = (reg: Registration, event: AppEvent) => {
@@ -1605,7 +1650,12 @@ export default function App() {
 
     if (amount <= 0) {
       // Free due to promo?
-      await updateRegistrationStatus(reg.id, RegistrationStatus.APPROVED);
+      if (reg.participationType === 'team' && reg.teamId) {
+        const teamRegs = registrations.filter(r => r.teamId === reg.teamId);
+        await Promise.all(teamRegs.map(r => updateRegistrationStatus(r.id, RegistrationStatus.APPROVED)));
+      } else {
+        await updateRegistrationStatus(reg.id, RegistrationStatus.APPROVED);
+      }
       addToast("Promo code covered entire cost! Ticket confirmed.", "success");
       await loadData();
       setIsPaymentModalOpen(false);
@@ -1664,8 +1714,8 @@ export default function App() {
             });
           } catch (e) { console.error("verify-payment failed", e); }
 
-          // Update local/mongo status
-          await updateRegistrationStatus(reg.id, RegistrationStatus.APPROVED, {
+          // Update local/mongo status for this registration and all team members if applicable
+          const paymentInfo = {
             paymentDetails: {
               status: PaymentStatus.COMPLETED,
               amount: amount,
@@ -1674,7 +1724,14 @@ export default function App() {
               orderId: response.razorpay_order_id,
               promocodeApplied: paymentAppliedPromo?.code
             }
-          });
+          };
+
+          if (reg.participationType === 'team' && reg.teamId) {
+            const teamRegs = registrations.filter(r => r.teamId === reg.teamId);
+            await Promise.all(teamRegs.map(r => updateRegistrationStatus(r.id, RegistrationStatus.APPROVED, r.id === reg.id ? paymentInfo : undefined)));
+          } else {
+            await updateRegistrationStatus(reg.id, RegistrationStatus.APPROVED, paymentInfo);
+          }
           addToast("Payment successful! Ticket confirmed.", "success");
           loadData();
           setIsPaymentModalOpen(false);
@@ -1959,11 +2016,31 @@ export default function App() {
     try {
       addToast("Preparing ticket...", "info");
 
+      if (document.fonts) {
+        await document.fonts.ready;
+      }
+
       const canvas = await html2canvas(element, {
         backgroundColor: null,
         scale: 3,
         logging: false,
         useCORS: true,
+        onclone: (clonedDoc) => {
+          const clonedCard = clonedDoc.getElementById('digital-ticket-card');
+          if (clonedCard) {
+            clonedCard.style.transform = 'none';
+            clonedCard.style.animation = 'none';
+
+            const attendeeName = clonedCard.querySelector('.ticket-attendee-name');
+            if (attendeeName) {
+              const el = attendeeName as HTMLElement;
+              el.style.overflow = 'visible';
+              el.style.paddingRight = '20px';
+              el.style.maxWidth = 'none';
+              el.style.textOverflow = 'clip';
+            }
+          }
+        },
       });
 
       const pngFile = canvas.toDataURL("image/png", 1.0);
@@ -5014,19 +5091,20 @@ export default function App() {
       {/* PROFILE EDIT MODAL */}
       {
         isProfileModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#020617]/80 backdrop-blur-xl selection:bg-orange-500/30">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-[#020617]/80 backdrop-blur-xl selection:bg-orange-500/30">
             <motion.div
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="bg-[#0f172a] w-full max-w-[420px] rounded-[32px] shadow-[0_0_60px_-15px_rgba(0,0,0,0.7)] border border-white/10 overflow-hidden flex flex-col relative group/modal"
+              className="bg-[#0f172a] w-full max-w-[440px] max-h-[90vh] rounded-[28px] sm:rounded-[32px] shadow-[0_0_60px_-15px_rgba(0,0,0,0.7)] border border-white/10 overflow-hidden flex flex-col relative group/modal my-auto"
             >
               {/* Decorative gradients */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-40 h-1 bg-gradient-to-r from-transparent via-orange-500 to-transparent opacity-50" />
-              <div className="absolute top-0 inset-x-0 h-40 bg-gradient-to-b from-orange-500/5 to-transparent pointer-events-none" />
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-40 h-1 bg-gradient-to-r from-transparent via-orange-500 to-transparent opacity-50 pointer-events-none" />
+              <div className="absolute top-0 inset-x-0 h-32 bg-gradient-to-b from-orange-500/5 to-transparent pointer-events-none" />
 
-              <div className="flex justify-between items-center p-6 pb-2 relative z-10">
+              {/* Pinned Header */}
+              <div className="flex justify-between items-center px-6 py-4 relative z-10 shrink-0 border-b border-slate-800/60 bg-[#0f172a]">
                 <motion.h3
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
@@ -5039,304 +5117,309 @@ export default function App() {
                   whileHover={{ scale: 1.1, rotate: 90 }}
                   whileTap={{ scale: 0.9 }}
                   onClick={() => setIsProfileModalOpen(false)}
-                  className="rounded-full p-2 text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                  className="rounded-full p-2 text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
                 >
                   <XCircle className="w-6 h-6" />
                 </motion.button>
               </div>
 
-              <form onSubmit={handleUpdateProfile} className="p-6 pt-2 space-y-5 relative z-10">
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className="flex flex-col items-center mb-2"
-                >
+              {/* Form with scrollable body and pinned footer */}
+              <form onSubmit={handleUpdateProfile} className="flex flex-col flex-1 min-h-0 overflow-hidden relative z-10">
+                {/* Scrollable Content */}
+                <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4 custom-scrollbar">
                   <motion.div
-                    whileHover={{ scale: 1.05 }}
-                    className="relative group cursor-pointer"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="flex flex-col items-center mb-1"
                   >
-                    <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-[#0f172a] shadow-xl ring-2 ring-white/10 group-hover:ring-orange-500 transition-all duration-300 flex items-center justify-center bg-slate-800">
-                      {profileForm.avatarUrl || currentUser?.avatarUrl ? (
-                        <motion.img
-                          initial={{ scale: 1.2 }}
-                          animate={{ scale: 1 }}
-                          src={profileForm.avatarUrl || currentUser?.avatarUrl}
-                          alt="Avatar"
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <UserCircle className="w-16 h-16 text-slate-600" />
-                      )}
-                    </div>
                     <motion.div
-                      className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center backdrop-blur-[2px]"
-                      initial={{ opacity: 0 }}
-                      whileHover={{ opacity: 1 }}
+                      whileHover={{ scale: 1.05 }}
+                      className="relative group cursor-pointer"
                     >
+                      <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-4 border-[#0f172a] shadow-xl ring-2 ring-white/10 group-hover:ring-orange-500 transition-all duration-300 flex items-center justify-center bg-slate-800">
+                        {profileForm.avatarUrl || currentUser?.avatarUrl ? (
+                          <motion.img
+                            initial={{ scale: 1.2 }}
+                            animate={{ scale: 1 }}
+                            src={profileForm.avatarUrl || currentUser?.avatarUrl}
+                            alt="Avatar"
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <UserCircle className="w-16 h-16 text-slate-600" />
+                        )}
+                      </div>
                       <motion.div
-                        initial={{ scale: 0.5, rotate: -45 }}
-                        whileHover={{ scale: 1, rotate: 0 }}
+                        className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center backdrop-blur-[2px]"
+                        initial={{ opacity: 0 }}
+                        whileHover={{ opacity: 1 }}
                       >
-                        <Camera className="w-8 h-8 text-white drop-shadow-lg" />
+                        <motion.div
+                          initial={{ scale: 0.5, rotate: -45 }}
+                          whileHover={{ scale: 1, rotate: 0 }}
+                        >
+                          <Camera className="w-8 h-8 text-white drop-shadow-lg" />
+                        </motion.div>
                       </motion.div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                        onChange={(e) => handleImageUpload(e, 'profile')}
+                      />
                     </motion.div>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                      onChange={(e) => handleImageUpload(e, 'profile')}
-                    />
+                    <motion.p
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.3 }}
+                      className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-2.5 group-hover:text-orange-400 max-w-[160px] text-center leading-tight transition-colors"
+                    >
+                      Tap to change profile picture
+                    </motion.p>
                   </motion.div>
-                  <motion.p
+
+                  <div className="space-y-3.5">
+                    <motion.div
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.3 }}
+                      className="space-y-1.5"
+                    >
+                      <label className="text-xs font-bold text-slate-400 ml-1">Full Name</label>
+                      <div className="relative">
+                        <motion.input
+                          whileFocus={{ scale: 1.01, backgroundColor: "rgba(30, 41, 59, 1)" }}
+                          type="text"
+                          required
+                          className="w-full pl-4 pr-4 py-3 rounded-2xl bg-[#1e293b] border border-slate-700/50 text-white font-semibold focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all placeholder:text-slate-600"
+                          value={profileForm.name}
+                          onChange={e => setProfileForm({ ...profileForm, name: e.target.value })}
+                          placeholder="John Doe"
+                        />
+                      </div>
+                    </motion.div>
+
+                    <motion.div
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.4 }}
+                      className="space-y-1.5"
+                    >
+                      <label className="text-xs font-bold text-slate-400 ml-1">Email</label>
+                      <div className="relative group/email">
+                        <input
+                          type="email"
+                          disabled
+                          className="w-full pl-4 pr-4 py-3 rounded-2xl bg-[#1e293b]/50 border border-slate-800 text-slate-500 font-medium cursor-not-allowed outline-none select-none transition-colors"
+                          value={profileForm.email}
+                        />
+                        <div className="absolute inset-0 bg-transparent" title="Email cannot be changed directly" />
+                      </div>
+                      <p className="text-[10px] text-slate-600 ml-1">Email cannot be changed directly.</p>
+                    </motion.div>
+
+                    <motion.div
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.5 }}
+                      className="space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between ml-1">
+                        <label className="text-xs font-bold text-slate-400">Phone Number</label>
+                        {profileForm.isPhoneVerified ? (
+                          <span className="text-[10px] text-green-400 font-bold flex items-center gap-1 bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20">
+                            <CheckCircle className="w-3 h-3" /> Verified
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-amber-400 font-medium">Verification required</span>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2 relative">
+                        {/* Country Code Selector */}
+                        <div className="relative w-36 shrink-0">
+                          <select
+                            disabled={isSendingProfilePhoneOtp || isVerifyingProfilePhoneOtp || !!currentUser?.phoneNumber}
+                            value={profileDialCode}
+                            onChange={e => {
+                              setProfileDialCode(e.target.value);
+                              const newFull = `${e.target.value}${profileNationalNumber.replace(/[^0-9]/g, '')}`;
+                              setProfileForm(prev => ({
+                                ...prev,
+                                phoneNumber: newFull,
+                                isPhoneVerified: newFull === currentUser?.phoneNumber
+                              }));
+                            }}
+                            className="w-full h-full px-3 py-3 rounded-2xl border border-slate-700/60 bg-[#1e293b] text-white font-mono text-xs font-bold outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 appearance-none cursor-pointer pr-7 disabled:opacity-50"
+                          >
+                            {COUNTRY_CODES.map(c => (
+                              <option key={c.code} value={c.dialCode} className="bg-[#0f172a] text-white py-1.5">
+                                {c.name} ({c.dialCode})
+                              </option>
+                            ))}
+                          </select>
+
+                          <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        </div>
+
+                        {/* National Phone Input */}
+                        <div className="relative flex-1">
+                          <input
+                            type="tel"
+                            inputMode="numeric"
+                            disabled={!!currentUser?.phoneNumber}
+                            placeholder="98765 43210"
+                            value={profileNationalNumber}
+                            onChange={e => {
+                              const val = e.target.value.replace(/[^0-9\s-]/g, '');
+                              setProfileNationalNumber(val);
+                              const newFullPhone = `${profileDialCode}${val.replace(/[^0-9]/g, '')}`;
+                              setProfileForm(prev => ({
+                                ...prev,
+                                phoneNumber: newFullPhone,
+                                isPhoneVerified: newFullPhone === currentUser?.phoneNumber
+                              }));
+                            }}
+                            className={`w-full pl-4 pr-4 py-3 rounded-2xl bg-[#1e293b] border text-white font-mono font-medium outline-none transition-all ${
+                              profileForm.isPhoneVerified
+                                ? 'border-green-500/40 bg-green-950/20 text-green-200'
+                                : 'border-slate-700/60 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20'
+                            } disabled:opacity-60 disabled:cursor-not-allowed`}
+                          />
+                        </div>
+
+                        {/* Verify Button (Twilio SMS) */}
+                        {!currentUser?.phoneNumber && !profileForm.isPhoneVerified && profileNationalNumber.trim().length >= 5 && (
+                          <motion.button
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            type="button"
+                            disabled={isSendingProfilePhoneOtp || isVerifyingProfilePhoneOtp}
+                            onClick={handleSendProfilePhoneOtp}
+                            className="px-3.5 rounded-2xl bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold text-xs hover:from-orange-500 hover:to-orange-400 shadow-lg shadow-orange-900/30 whitespace-nowrap cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          >
+                            {isSendingProfilePhoneOtp ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Sending...</span>
+                              </>
+                            ) : (
+                              <span>Verify via SMS</span>
+                            )}
+                          </motion.button>
+                        )}
+                      </div>
+
+                      {currentUser?.phoneNumber ? (
+                        <p className="text-[10px] text-green-500/70 font-medium ml-1 flex items-center gap-1">
+                          <Shield className="w-3 h-3" /> Verified phone number cannot be changed.
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-slate-500 ml-1">Select your country code and enter your mobile number.</p>
+                      )}
+
+                      {/* OTP Entry when OTP dispatched */}
+                      <AnimatePresence>
+                        {showOtpInput && otpPurpose === 'profile' && !profileForm.isPhoneVerified && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="pt-2"
+                          >
+                            <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-orange-500/30 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-orange-400 flex items-center gap-1.5">
+                                  <KeyRound className="w-3.5 h-3.5" /> Enter 6-Digit SMS Code
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  Sent to {profileDialCode}{profileNationalNumber.replace(/[^0-9]/g, '')}
+                                </span>
+                              </div>
+
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9]*"
+                                  maxLength={6}
+                                  placeholder="••••••"
+                                  value={otp}
+                                  onChange={e => setOtp(e.target.value.replace(/[^0-9]/g, ''))}
+                                  className="flex-1 px-4 py-2.5 rounded-xl bg-[#020617] border border-orange-500/50 text-white font-mono text-center tracking-[0.5em] font-bold text-lg focus:ring-2 focus:ring-orange-500/30 outline-none"
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  disabled={isVerifyingProfilePhoneOtp || otp.length < 4}
+                                  onClick={handleVerifyProfilePhoneOtp}
+                                  className="px-5 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-green-900/30 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                                >
+                                  {isVerifyingProfilePhoneOtp ? (
+                                    <>
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      <span>Verifying...</span>
+                                    </>
+                                  ) : (
+                                    <span>Confirm</span>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </motion.div>
+
+                  </div>
+
+                  <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    transition={{ delay: 0.3 }}
-                    className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-3 group-hover:text-orange-400 max-w-[150px] text-center leading-tight transition-colors"
+                    transition={{ delay: 0.6 }}
+                    className="mt-4 pt-4 border-t border-slate-800/50"
                   >
-                    Tap to change profile picture
-                  </motion.p>
-                </motion.div>
-
-                <div className="space-y-4">
-                  <motion.div
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.3 }}
-                    className="space-y-1.5"
-                  >
-                    <label className="text-xs font-bold text-slate-400 ml-1">Full Name</label>
-                    <div className="relative">
-                      <motion.input
-                        whileFocus={{ scale: 1.02, backgroundColor: "rgba(30, 41, 59, 1)" }}
-                        type="text"
-                        required
-                        className="w-full pl-4 pr-4 py-3.5 rounded-2xl bg-[#1e293b] border border-slate-700/50 text-white font-semibold focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 outline-none transition-all placeholder:text-slate-600"
-                        value={profileForm.name}
-                        onChange={e => setProfileForm({ ...profileForm, name: e.target.value })}
-                        placeholder="John Doe"
-                      />
-                    </div>
-                  </motion.div>
-
-                  <motion.div
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.4 }}
-                    className="space-y-1.5"
-                  >
-                    <label className="text-xs font-bold text-slate-400 ml-1">Email</label>
-                    <div className="relative group/email">
-                      <input
-                        type="email"
-                        disabled
-                        className="w-full pl-4 pr-4 py-3.5 rounded-2xl bg-[#1e293b]/50 border border-slate-800 text-slate-500 font-medium cursor-not-allowed outline-none select-none transition-colors"
-                        value={profileForm.email}
-                      />
-                      <div className="absolute inset-0 bg-transparent" title="Email cannot be changed directly" />
-                    </div>
-                    <p className="text-[10px] text-slate-600 ml-1">Email cannot be changed directly.</p>
-                  </motion.div>
-
-                  <motion.div
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.5 }}
-                    className="space-y-2"
-                  >
-                    <div className="flex items-center justify-between ml-1">
-                      <label className="text-xs font-bold text-slate-400">Phone Number</label>
-                      {profileForm.isPhoneVerified ? (
-                        <span className="text-[10px] text-green-400 font-bold flex items-center gap-1 bg-green-500/10 px-2 py-0.5 rounded-full border border-green-500/20">
-                          <CheckCircle className="w-3 h-3" /> Verified
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-amber-400 font-medium">Verification required</span>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2 relative">
-                      {/* Country Code Selector */}
-                      <div className="relative w-36 shrink-0">
-                        <select
-                          disabled={isSendingProfilePhoneOtp || isVerifyingProfilePhoneOtp || !!currentUser?.phoneNumber}
-                          value={profileDialCode}
-                          onChange={e => {
-                            setProfileDialCode(e.target.value);
-                            const newFull = `${e.target.value}${profileNationalNumber.replace(/[^0-9]/g, '')}`;
-                            setProfileForm(prev => ({
-                              ...prev,
-                              phoneNumber: newFull,
-                              isPhoneVerified: newFull === currentUser?.phoneNumber
-                            }));
-                          }}
-                          className="w-full h-full px-3 py-3.5 rounded-2xl border border-slate-700/60 bg-[#1e293b] text-white font-mono text-xs font-bold outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20 appearance-none cursor-pointer pr-7 disabled:opacity-50"
-                        >
-                          {COUNTRY_CODES.map(c => (
-                            <option key={c.code} value={c.dialCode} className="bg-[#0f172a] text-white py-1.5">
-                              {c.name} ({c.dialCode})
-                            </option>
-                          ))}
-                        </select>
-
-                        <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <div className="flex items-center justify-between group/danger">
+                      <div>
+                        <h4 className="text-xs font-bold text-red-500 uppercase tracking-wider group-hover/danger:text-red-400 transition-colors">Danger Zone</h4>
+                        <p className="text-[10px] text-slate-500 mt-0.5 font-medium">Permanently delete your account and all data</p>
                       </div>
-
-                      {/* National Phone Input */}
-                      <div className="relative flex-1">
-                        <input
-                          type="tel"
-                          inputMode="numeric"
-                          disabled={!!currentUser?.phoneNumber}
-                          placeholder="98765 43210"
-                          value={profileNationalNumber}
-                          onChange={e => {
-                            const val = e.target.value.replace(/[^0-9\s-]/g, '');
-                            setProfileNationalNumber(val);
-                            const newFullPhone = `${profileDialCode}${val.replace(/[^0-9]/g, '')}`;
-                            setProfileForm(prev => ({
-                              ...prev,
-                              phoneNumber: newFullPhone,
-                              isPhoneVerified: newFullPhone === currentUser?.phoneNumber
-                            }));
-                          }}
-                          className={`w-full pl-4 pr-4 py-3.5 rounded-2xl bg-[#1e293b] border text-white font-mono font-medium outline-none transition-all ${
-                            profileForm.isPhoneVerified
-                              ? 'border-green-500/40 bg-green-950/20 text-green-200'
-                              : 'border-slate-700/60 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20'
-                          } disabled:opacity-60 disabled:cursor-not-allowed`}
-                        />
-                      </div>
-
-                      {/* Verify Button (Twilio SMS) */}
-                      {!currentUser?.phoneNumber && !profileForm.isPhoneVerified && profileNationalNumber.trim().length >= 5 && (
-                        <motion.button
-                          initial={{ opacity: 0, scale: 0.9 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          type="button"
-                          disabled={isSendingProfilePhoneOtp || isVerifyingProfilePhoneOtp}
-                          onClick={handleSendProfilePhoneOtp}
-                          className="px-4 rounded-2xl bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold text-xs hover:from-orange-500 hover:to-orange-400 shadow-lg shadow-orange-900/30 whitespace-nowrap cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                        >
-                          {isSendingProfilePhoneOtp ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Sending...</span>
-                            </>
-                          ) : (
-                            <span>Verify via SMS</span>
-                          )}
-                        </motion.button>
-                      )}
+                      <motion.button
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
+                        type="button"
+                        disabled={isSendingDeleteOtp}
+                        onClick={() => handleOpenDeleteModal()}
+                        className="px-3.5 py-2 rounded-xl text-xs font-bold border transition-all bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 hover:border-red-500/50 cursor-pointer disabled:opacity-60 flex items-center gap-2"
+                      >
+                        {isSendingDeleteOtp ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
+                            <span>Sending OTP...</span>
+                          </>
+                        ) : (
+                          <span>Delete Account</span>
+                        )}
+                      </motion.button>
                     </div>
-
-                    {currentUser?.phoneNumber ? (
-                      <p className="text-[10px] text-green-500/70 font-medium ml-1 flex items-center gap-1">
-                        <Shield className="w-3 h-3" /> Verified phone number cannot be changed.
+                    <div className="mt-2.5 flex items-start gap-2 p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/60">
+                      <Mail className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        Requires verification via a 6-digit OTP code sent to <span className="text-slate-300 font-mono font-medium">{currentUser?.email}</span>.
                       </p>
-                    ) : (
-                      <p className="text-[10px] text-slate-500 ml-1">Select your country code and enter your mobile number.</p>
-                    )}
-
-                    {/* OTP Entry when OTP dispatched */}
-                    <AnimatePresence>
-                      {showOtpInput && otpPurpose === 'profile' && !profileForm.isPhoneVerified && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="pt-2"
-                        >
-                          <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-orange-500/30 space-y-2.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-orange-400 flex items-center gap-1.5">
-                                <KeyRound className="w-3.5 h-3.5" /> Enter 6-Digit SMS Code
-                              </span>
-                              <span className="text-[10px] text-slate-400 font-mono">
-                                Sent to {profileDialCode}{profileNationalNumber.replace(/[^0-9]/g, '')}
-                              </span>
-                            </div>
-
-                            <div className="flex gap-2">
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                pattern="[0-9]*"
-                                maxLength={6}
-                                placeholder="••••••"
-                                value={otp}
-                                onChange={e => setOtp(e.target.value.replace(/[^0-9]/g, ''))}
-                                className="flex-1 px-4 py-2.5 rounded-xl bg-[#020617] border border-orange-500/50 text-white font-mono text-center tracking-[0.5em] font-bold text-lg focus:ring-2 focus:ring-orange-500/30 outline-none"
-                                autoFocus
-                              />
-                              <button
-                                type="button"
-                                disabled={isVerifyingProfilePhoneOtp || otp.length < 4}
-                                onClick={handleVerifyProfilePhoneOtp}
-                                className="px-5 py-2.5 bg-green-600 hover:bg-green-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-green-900/30 transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
-                              >
-                                {isVerifyingProfilePhoneOtp ? (
-                                  <>
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    <span>Verifying...</span>
-                                  </>
-                                ) : (
-                                  <span>Confirm</span>
-                                )}
-                              </button>
-                            </div>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                    </div>
                   </motion.div>
-
                 </div>
 
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.6 }}
-                  className="mt-6 pt-5 border-t border-slate-800/50"
-                >
-                  <div className="flex items-center justify-between group/danger">
-                    <div>
-                      <h4 className="text-xs font-bold text-red-500 uppercase tracking-wider group-hover/danger:text-red-400 transition-colors">Danger Zone</h4>
-                      <p className="text-[10px] text-slate-500 mt-1 font-medium">Permanently delete your account and all data</p>
-                    </div>
-                    <motion.button
-                      whileHover={{ scale: 1.03 }}
-                      whileTap={{ scale: 0.97 }}
-                      type="button"
-                      disabled={isSendingDeleteOtp}
-                      onClick={() => handleOpenDeleteModal()}
-                      className="px-4 py-2.5 rounded-xl text-xs font-bold border transition-all bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20 hover:border-red-500/50 cursor-pointer disabled:opacity-60 flex items-center gap-2"
-                    >
-                      {isSendingDeleteOtp ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
-                          <span>Sending OTP...</span>
-                        </>
-                      ) : (
-                        <span>Delete Account</span>
-                      )}
-                    </motion.button>
-                  </div>
-                  <div className="mt-3 flex items-start gap-2 p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/60">
-                    <Mail className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-[11px] text-slate-400 leading-relaxed">
-                      Requires verification via a 6-digit OTP code sent to <span className="text-slate-300 font-mono font-medium">{currentUser?.email}</span>.
-                    </p>
-                  </div>
-                </motion.div>
-
-                <div className="pt-4 flex gap-4">
+                {/* Pinned Action Buttons Footer */}
+                <div className="p-4 sm:px-6 sm:py-4 border-t border-slate-800/80 bg-[#0f172a] flex gap-3 shrink-0">
                   <motion.button
                     whileHover={{ scale: 1.02, backgroundColor: "rgba(51, 65, 85, 1)" }}
                     whileTap={{ scale: 0.98 }}
                     type="button"
                     onClick={() => setIsProfileModalOpen(false)}
-                    className="flex-1 py-3.5 rounded-2xl bg-[#1e293b] text-slate-300 font-bold text-sm border border-slate-700/50 transition-colors"
+                    className="flex-1 py-3 rounded-2xl bg-[#1e293b] text-slate-300 font-bold text-sm border border-slate-700/50 transition-colors cursor-pointer"
                   >
                     Cancel
                   </motion.button>
@@ -5345,7 +5428,7 @@ export default function App() {
                     whileTap={{ scale: 0.98 }}
                     type="submit"
                     disabled={isSavingProfile}
-                    className="flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold text-sm shadow-xl shadow-orange-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-orange-600 to-orange-500 text-white font-bold text-sm shadow-xl shadow-orange-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
                   >
                     {isSavingProfile ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Changes'}
                   </motion.button>
@@ -5365,7 +5448,7 @@ export default function App() {
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
-              className="bg-[#0f172a] w-full max-w-[440px] rounded-[32px] shadow-[0_0_60px_-15px_rgba(0,0,0,0.8)] border border-slate-700/60 overflow-hidden flex flex-col relative p-7 md:p-8 text-left group/modal"
+              className="bg-[#0f172a] w-full max-w-[440px] max-h-[90vh] overflow-y-auto custom-scrollbar rounded-[32px] shadow-[0_0_60px_-15px_rgba(0,0,0,0.8)] border border-slate-700/60 flex flex-col relative p-7 md:p-8 text-left group/modal"
             >
               {/* Decorative top accent gradients */}
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-1 bg-gradient-to-r from-transparent via-red-500 to-transparent opacity-70" />
@@ -5600,26 +5683,77 @@ export default function App() {
                       <div className="pt-4 border-t border-slate-800">
                         <p className="text-sm font-bold text-white mb-3">Team Members</p>
                         <div className="space-y-2">
-                          {registrations
-                            .filter(r => r.teamId === selectedRegistrationDetails.teamId && r.status !== RegistrationStatus.REJECTED)
-                            .map(member => (
+                          {(() => {
+                            const teamObj = teams.find(t => t.id === selectedRegistrationDetails.teamId);
+                            const teamRegs = registrations.filter(r => r.teamId === selectedRegistrationDetails.teamId && r.status !== RegistrationStatus.REJECTED);
+
+                            // Build unified list from registrations and team.members
+                            const memberMap = new Map<string, {
+                              id: string;
+                              name: string;
+                              email?: string;
+                              isLeader: boolean;
+                              status?: RegistrationStatus;
+                              isCurrent: boolean;
+                            }>();
+
+                            // 1. Add all registrations
+                            teamRegs.forEach(r => {
+                              const key = (r.participantEmail || r.participantId || '').toLowerCase();
+                              memberMap.set(key, {
+                                id: r.id,
+                                name: r.participantName || 'Team Member',
+                                email: r.participantEmail,
+                                isLeader: !!r.isTeamLeader || r.participantId === teamObj?.leaderId,
+                                status: r.status,
+                                isCurrent: r.participantEmail === currentUser?.email || r.participantId === currentUser?.id
+                              });
+                            });
+
+                            // 2. Supplement from teamObj.members
+                            if (teamObj?.members && Array.isArray(teamObj.members)) {
+                              teamObj.members.forEach(m => {
+                                const key = (m.email || m.userId || '').toLowerCase();
+                                if (!memberMap.has(key)) {
+                                  memberMap.set(key, {
+                                    id: m.userId || m.email,
+                                    name: m.userName || m.email?.split('@')[0] || 'Team Member',
+                                    email: m.email,
+                                    isLeader: m.userId === teamObj.leaderId,
+                                    status: selectedRegistrationDetails.status,
+                                    isCurrent: m.email === currentUser?.email || m.userId === currentUser?.id
+                                  });
+                                }
+                              });
+                            }
+
+                            const allMembers = Array.from(memberMap.values());
+
+                            return allMembers.map(member => (
                               <div key={member.id} className="flex items-center justify-between bg-slate-800/30 p-2.5 rounded-xl border border-white/5">
                                 <div className="flex items-center gap-3">
                                   <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-300">
-                                    {member.participantName.charAt(0)}
+                                    {(member.name || 'M').charAt(0).toUpperCase()}
                                   </div>
                                   <div className="flex flex-col">
-                                    <span className="text-sm text-slate-200 font-medium">{member.participantName}</span>
-                                    {member.participantEmail === currentUser?.email && <span className="text-[10px] text-orange-400 font-bold">You</span>}
+                                    <span className="text-sm text-slate-200 font-medium">{member.name}</span>
+                                    <div className="flex items-center gap-1.5">
+                                      {member.email && <span className="text-[10px] text-slate-400">{member.email}</span>}
+                                      {member.isCurrent && <span className="text-[10px] text-orange-400 font-bold">• You</span>}
+                                    </div>
                                   </div>
                                 </div>
-                                {member.isTeamLeader && (
-                                  <span className="text-[8px] font-black uppercase tracking-[0.2em] text-orange-400 bg-orange-400/10 border border-orange-400/20 px-2 py-1 rounded-md">
-                                    Leader
-                                  </span>
-                                )}
+                                <div className="flex items-center gap-2">
+                                  {member.status && <Badge status={member.status} />}
+                                  {member.isLeader && (
+                                    <span className="text-[8px] font-black uppercase tracking-[0.2em] text-orange-400 bg-orange-400/10 border border-orange-400/20 px-2 py-1 rounded-md">
+                                      Leader
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                            ))}
+                            ));
+                          })()}
                         </div>
                       </div>
                     )}
@@ -5656,7 +5790,9 @@ export default function App() {
                        selectedRegistrationDetails.status === RegistrationStatus.TEAM_AWAITING_SUBMISSION && (
                         (() => {
                           const event = events.find(e => e.id === selectedRegistrationDetails.eventId);
-                          const membersCount = registrations.filter(r => r.teamId === selectedRegistrationDetails.teamId && r.status !== RegistrationStatus.REJECTED).length;
+                          const teamObj = teams.find(t => t.id === selectedRegistrationDetails.teamId);
+                          const teamRegs = registrations.filter(r => r.teamId === selectedRegistrationDetails.teamId && r.status !== RegistrationStatus.REJECTED);
+                          const membersCount = Math.max(teamRegs.length, teamObj?.members?.length || 0);
                           const minSize = event?.minTeamSize || 1;
                           const isIncomplete = membersCount < minSize;
                           
@@ -5831,12 +5967,14 @@ export default function App() {
                 </div>
 
                 <div className="flex items-center justify-between pt-2">
-                  <div className="text-left">
+                  <div className="text-left flex-1 min-w-0 pr-3">
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Attendee</p>
-                    <p className="text-lg font-bold text-white font-outfit truncate max-w-[180px]">{selectedTicket.participantName}</p>
+                    <p className="text-lg font-bold text-white font-outfit break-words pr-4 ticket-attendee-name leading-tight" style={{ overflow: 'visible' }}>
+                      {selectedTicket.participantName}
+                    </p>
                     <p className="text-[10px] font-mono text-slate-600 mt-0.5">#{selectedTicket.id.slice(0, 8).toUpperCase()}</p>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right flex-shrink-0 pl-1">
                     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Status</p>
                     {selectedTicket.attended ? (
                       <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-[10px] font-bold text-green-400 uppercase tracking-wide">
@@ -6283,6 +6421,7 @@ export default function App() {
                               <p className="text-slate-500 text-xs mt-1">Be the first to start the discussion!</p>
                             </div>
                           )}
+                          <div ref={messagesEndRef} />
                         </div>
 
                         <form onSubmit={handleSendMessage} className="mt-auto pt-4 border-t border-slate-800 flex gap-2">

@@ -577,15 +577,28 @@ async def data_action(action: str, request: Request):
                     "action": "insert",
                     "document": _serialise(document),
                 })
+            elif collection_name == "teams":
+                await sio.emit("data_updated", {
+                    "collection": "teams",
+                    "action": "insert",
+                    "document": _serialise(document),
+                })
             elif collection_name == "notifications":
                 await sio.emit("notification_received", _serialise(document))
+            elif collection_name == "messages":
+                await sio.emit("data_updated", {
+                    "collection": "messages",
+                    "action": "insert",
+                    "eventId": document.get("eventId"),
+                    "document": _serialise(document),
+                })
 
             return {"insertedId": str(result.inserted_id)}
 
         elif action == "updateOne":
             result = await asyncio.to_thread(col.update_one, filter_doc, update)
 
-            if collection_name in ("events", "registrations"):
+            if collection_name in ("events", "registrations", "teams", "messages"):
                 await sio.emit("data_updated", {
                     "collection": collection_name,
                     "action": "update",
@@ -602,7 +615,7 @@ async def data_action(action: str, request: Request):
         elif action == "updateMany":
             result = await asyncio.to_thread(col.update_many, filter_doc, update)
 
-            if collection_name in ("events", "registrations"):
+            if collection_name in ("events", "registrations", "teams", "messages"):
                 await sio.emit("data_updated", {
                     "collection": collection_name,
                     "action": "update_many",
@@ -619,7 +632,7 @@ async def data_action(action: str, request: Request):
         elif action == "deleteOne":
             result = await asyncio.to_thread(col.delete_one, filter_doc)
 
-            if collection_name in ("events", "registrations"):
+            if collection_name in ("events", "registrations", "teams", "messages"):
                 await sio.emit("data_updated", {
                     "collection": collection_name,
                     "action": "delete",
@@ -631,7 +644,7 @@ async def data_action(action: str, request: Request):
         elif action == "deleteMany":
             result = await asyncio.to_thread(col.delete_many, filter_doc)
 
-            if collection_name in ("events", "registrations"):
+            if collection_name in ("events", "registrations", "teams", "messages"):
                 await sio.emit("data_updated", {
                     "collection": collection_name,
                     "action": "delete_many",
@@ -655,6 +668,24 @@ async def data_action(action: str, request: Request):
                 "userEmail": request.headers.get("x-user-email"),
                 "role": request.headers.get("x-user-role"),
             }
+
+            # Pre-fetch user's team IDs so registrations for their teams can be accessed
+            u_id = user_context.get("userId")
+            u_email = user_context.get("userEmail")
+            user_team_ids: set[str] = set()
+            if u_id or u_email:
+                conds = []
+                if u_id:
+                    conds.append({"leaderId": u_id})
+                    conds.append({"members.userId": u_id})
+                if u_email:
+                    conds.append({"members.email": u_email})
+                if conds:
+                    matched_teams = await asyncio.to_thread(
+                        lambda: list(db["teams"].find({"$or": conds}, {"id": 1}))
+                    )
+                    user_team_ids = {t.get("id") for t in matched_teams if t.get("id")}
+            user_context["userTeamIds"] = user_team_ids
 
             # Fetch all events to determine permissions (in thread)
             all_events: list[dict] = []
@@ -996,12 +1027,13 @@ def send_twilio_comms_email(to_email: str, otp_code: str, subject: str, html_bod
 
 
 def send_email_message(to_email: str, subject: str, html_body: str, text_body: str = "") -> bool:
-    load_dotenv(override=True)
-    smtp_user = os.getenv("SMTP_USER", SMTP_USER)
-    smtp_pass = os.getenv("SMTP_PASS", SMTP_PASS)
-    smtp_host = os.getenv("SMTP_HOST", SMTP_HOST)
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    load_dotenv(env_path, override=True)
+    smtp_user = os.getenv("SMTP_USER", "").strip() or SMTP_USER
+    smtp_pass = os.getenv("SMTP_PASS", "").strip() or SMTP_PASS
+    smtp_host = os.getenv("SMTP_HOST", "").strip() or SMTP_HOST
     smtp_port = int(os.getenv("SMTP_PORT", str(SMTP_PORT)))
-    smtp_from = os.getenv("SMTP_FROM", SMTP_FROM) or smtp_user or "noreply@eventron.com"
+    smtp_from = os.getenv("SMTP_FROM", "").strip() or smtp_user or "noreply@eventron.com"
 
     if smtp_user and smtp_pass:
         try:
@@ -1103,17 +1135,17 @@ async def send_email_delete_otp(request: Request):
         """
         text_body = f"Your Eventron account deletion verification code is: {otp_code}\n\nThis code expires in 10 minutes. If you did not request this, please ignore this email."
 
-        # 1. Primary: Send email with 6-digit OTP via Twilio Comms Email API
-        sent_twilio_comms = await asyncio.to_thread(send_twilio_comms_email, email, otp_code, subject, html_body)
+        # 1. Primary: Send email with 6-digit OTP via SMTP (Fast, direct, works for all emails)
+        sent_smtp = await asyncio.to_thread(send_email_message, email, subject, html_body, text_body)
 
-        # 2. Secondary: Send email with 6-digit OTP via SMTP
-        sent_smtp = False
-        if not sent_twilio_comms:
-            sent_smtp = await asyncio.to_thread(send_email_message, email, subject, html_body, text_body)
+        # 2. Secondary fallback: Send email via Twilio Comms Email API if SMTP fails
+        sent_twilio_comms = False
+        if not sent_smtp:
+            sent_twilio_comms = await asyncio.to_thread(send_twilio_comms_email, email, otp_code, subject, html_body)
 
         # 3. Tertiary fallback: Twilio Verify Service Email if needed
         sent_twilio_verify = False
-        if not (sent_twilio_comms or sent_smtp):
+        if not (sent_smtp or sent_twilio_comms):
             acc_sid, auth_tok, v_sid = get_twilio_credentials()
             if acc_sid and auth_tok and v_sid:
                 try:
@@ -1129,17 +1161,25 @@ async def send_email_delete_otp(request: Request):
                         sent_twilio_verify = True
                         print(f"✅ Twilio Verify Email OTP sent to {email}")
                 except Exception as twilio_err:
-                    pass
+                    print(f"⚠️ Twilio Verify Error: {twilio_err}")
 
-        print(f"🔑 [EMAIL DELETION OTP] Generated OTP for {email}: {otp_code}")
+        email_delivered = sent_smtp or sent_twilio_comms or sent_twilio_verify
+        print(f"🔑 [EMAIL DELETION OTP] OTP for {email} delivered: {email_delivered} (SMTP: {sent_smtp}, Comms: {sent_twilio_comms}, Verify: {sent_twilio_verify})")
 
-        email_delivered = sent_twilio_comms or sent_smtp or sent_twilio_verify
+        if not email_delivered:
+            return Response(
+                content=json.dumps({
+                    "success": False,
+                    "message": "Failed to send verification email. Please check your network or try again."
+                }),
+                status_code=500,
+                media_type="application/json",
+            )
 
         return {
             "success": True,
             "message": f"Verification code sent to {email}.",
-            "email": email,
-            "otp_preview": otp_code if not email_delivered else None
+            "email": email
         }
 
 

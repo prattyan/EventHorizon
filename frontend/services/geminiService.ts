@@ -161,6 +161,10 @@ const getAIClient = (): GoogleGenAI | null => {
   return aiInstance;
 };
 
+export const GEMINI_MODEL_FAST = "gemini-flash-lite-latest";
+export const GEMINI_MODEL_BACKUP = "gemini-3.5-flash-lite";
+export const GEMINI_MODEL_DEFAULT = "gemini-3.6-flash";
+
 export const checkGeminiHealth = async (force: boolean = false): Promise<GeminiStatusState> => {
   if (!isGeminiConfigured()) {
     updateStatus({
@@ -196,7 +200,7 @@ export const checkGeminiHealth = async (force: boolean = false): Promise<GeminiS
 
   try {
     // Perform a lightweight getModel call to verify active API key and service account
-    await ai.models.get({ model: "gemini-3.6-flash" });
+    await ai.models.get({ model: GEMINI_MODEL_FAST });
 
     updateStatus({
       isConfigured: true,
@@ -256,8 +260,9 @@ export const generateEventDescription = async (title: string, date: string, loca
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_MODEL_FAST,
       contents: prompt,
+      config: { maxOutputTokens: 400, temperature: 0.7 }
     });
 
     const text = response.text;
@@ -311,8 +316,9 @@ export const getEventRecommendations = async (
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_MODEL_FAST,
       contents: prompt,
+      config: { maxOutputTokens: 150, temperature: 0.2 }
     });
 
     const text = response.text ?? "";
@@ -336,23 +342,31 @@ export const getEventRecommendations = async (
   }
 };
 
-export const chatWithAI = async (
+export const streamChatWithAI = async (
   query: string,
-  eventsContext: { title: string; date: string; location: string; description: string; type: string; isPaid?: boolean; price?: number; capacity?: number }[]
+  eventsContext: { title: string; date: string; location: string; description: string; type: string; isPaid?: boolean; price?: number; capacity?: number }[],
+  onChunk: (chunkText: string, fullTextSoFar: string) => void
 ): Promise<string> => {
   if (!isGeminiConfigured()) {
-    return "⚠️ **AI Assistant Offline**\n\nThe Gemini API key is not configured. Please set `VITE_GEMINI_API_KEY` in your `.env` file.";
+    const msg = "⚠️ **AI Assistant Offline**\n\nThe Gemini API key is not configured. Please set `VITE_GEMINI_API_KEY` in your `.env` file.";
+    onChunk(msg, msg);
+    return msg;
   }
 
   const ai = getAIClient();
   if (!ai) {
-    return "⚠️ **AI Assistant Offline**\n\nThe AI assistant client could not be initialized.";
+    const msg = "⚠️ **AI Assistant Offline**\n\nThe AI assistant client could not be initialized.";
+    onChunk(msg, msg);
+    return msg;
   }
 
   try {
-    const eventsSummary = eventsContext.map(e =>
-      `- ${e.title} (${e.type}) on ${e.date} at ${e.location}. Price: ${e.isPaid ? `₹${e.price}` : 'Free'}. Capacity: ${e.capacity}. Details: ${e.description.substring(0, 150)}...`
-    ).join('\n');
+    // Keep context concise: top 20 events with max 100 characters description
+    const eventsSummary = eventsContext
+      .slice(0, 20)
+      .map(e =>
+        `- ${e.title} (${e.type}) on ${e.date} at ${e.location}. Price: ${e.isPaid ? `₹${e.price}` : 'Free'}. Capacity: ${e.capacity}. Details: ${e.description ? e.description.substring(0, 100) : 'N/A'}`
+      ).join('\n');
 
     const currentDateTime = new Date().toLocaleString();
 
@@ -376,10 +390,42 @@ export const chatWithAI = async (
       6. Do not invent facts.
     `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: prompt,
-    });
+    // Attempt streaming with ultra-fast models with fallback
+    let fullText = '';
+    const modelsToTry = [GEMINI_MODEL_FAST, GEMINI_MODEL_BACKUP, GEMINI_MODEL_DEFAULT];
+    let streamSuccess = false;
+    let lastError: any = null;
+
+    for (const model of modelsToTry) {
+      try {
+        const stream = await ai.models.generateContentStream({
+          model,
+          contents: prompt,
+          config: {
+            maxOutputTokens: 600,
+            temperature: 0.6
+          }
+        });
+
+        for await (const chunk of stream) {
+          const chunkText = chunk.text || '';
+          if (chunkText) {
+            fullText += chunkText;
+            onChunk(chunkText, fullText);
+          }
+        }
+
+        streamSuccess = true;
+        break;
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Model ${model} streaming error, trying next fallback:`, err?.message || err);
+      }
+    }
+
+    if (!streamSuccess) {
+      throw lastError || new Error("Failed to stream response from Gemini");
+    }
 
     // If previously marked offline or checking, update to online
     if (!currentStatus.isOnline) {
@@ -392,13 +438,11 @@ export const chatWithAI = async (
       });
     }
 
-    const text = response.text;
-    return text?.trim() || "I apologize, but I couldn't process your request at the moment.";
+    return fullText.trim() || "I apologize, but I couldn't process your request at the moment.";
   } catch (error: any) {
     const errorDetails = parseGeminiError(error);
     console.error("Gemini Chat Error:", errorDetails.message);
 
-    // If it's an authentication or account state error (suspended/disabled/invalid), immediately mark as offline
     if (errorDetails.isAuthOrStateError) {
       updateStatus({
         isOnline: false,
@@ -408,9 +452,20 @@ export const chatWithAI = async (
         lastChecked: Date.now()
       });
 
-      return `⚠️ **AI Assistant Offline**\n\n${errorDetails.message}\n\nPlease update your \`VITE_GEMINI_API_KEY\` with an active Google Gemini key in the \`.env\` file.`;
+      const msg = `⚠️ **AI Assistant Offline**\n\n${errorDetails.message}\n\nPlease update your \`VITE_GEMINI_API_KEY\` with an active Google Gemini key in the \`.env\` file.`;
+      onChunk(msg, msg);
+      return msg;
     }
 
-    return `⚠️ **Error communicating with Gemini**: ${errorDetails.message}. Please try again later.`;
+    const msg = `⚠️ **Error communicating with Gemini**: ${errorDetails.message}. Please try again later.`;
+    onChunk(msg, msg);
+    return msg;
   }
+};
+
+export const chatWithAI = async (
+  query: string,
+  eventsContext: { title: string; date: string; location: string; description: string; type: string; isPaid?: boolean; price?: number; capacity?: number }[]
+): Promise<string> => {
+  return streamChatWithAI(query, eventsContext, () => {});
 };
